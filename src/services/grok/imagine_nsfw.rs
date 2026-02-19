@@ -32,6 +32,7 @@ pub struct ImagineProgressEvent {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ImagineResult {
     pub success: bool,
     pub urls: Vec<String>,
@@ -66,6 +67,7 @@ impl ImagineResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct ImageProgress {
     image_id: String,
     stage: String,

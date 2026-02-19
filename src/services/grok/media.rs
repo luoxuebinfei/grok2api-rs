@@ -309,6 +309,7 @@ impl VideoService {
     }
 }
 
+#[allow(dead_code)]
 pub enum VideoResult {
     Stream {
         stream: LineStream,

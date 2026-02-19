@@ -950,6 +950,7 @@ impl VideoCollectProcessor {
 
 pub struct ImageStreamProcessor {
     base: BaseProcessor,
+    #[allow(dead_code)]
     partial_index: usize,
     n: usize,
     target_index: Option<usize>,

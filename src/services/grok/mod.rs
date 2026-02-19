@@ -9,6 +9,7 @@ pub mod media;
 pub mod model;
 pub mod nsfw;
 pub mod processor;
+#[allow(dead_code)]
 pub mod retry;
 pub mod statsig;
 pub mod usage;

@@ -7,7 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response, Sse},
     routing::{get, post},
 };
-use futures::{Stream, StreamExt};
+
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
@@ -20,7 +20,7 @@ use crate::core::exceptions::ApiError;
 use crate::core::static_assets;
 use crate::core::storage::{Storage, get_storage};
 use crate::services::grok::assets::{DeleteService, DownloadService, ListService};
-use crate::services::grok::batch::{OnItem, ShouldCancel, run_in_batches};
+use crate::services::grok::batch::{OnItem, run_in_batches};
 use crate::services::grok::nsfw::NsfwService;
 use crate::services::token::get_token_manager;
 
@@ -659,8 +659,7 @@ async fn get_cache_stats_api(
     let scope = query.scope.clone();
     let selected_token = query.token.clone();
 
-    let mut online_stats =
-        json!({"count":0,"status":"unknown","token":null,"last_asset_clear_at":null});
+    let online_stats;
     let mut online_details = Vec::new();
 
     let max_tokens: usize =

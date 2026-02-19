@@ -117,6 +117,7 @@ impl GrpcStatus {
         self.code == 0
     }
 
+    #[allow(dead_code)]
     pub fn http_equiv(&self) -> u16 {
         match self.code {
             0 => 200,

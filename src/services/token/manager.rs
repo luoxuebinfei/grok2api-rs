@@ -9,7 +9,7 @@ use crate::core::config::get_config;
 use crate::core::storage::{Storage, get_storage};
 use crate::services::grok::usage::UsageService;
 use crate::services::token::models::{
-    DEFAULT_QUOTA, EffortType, FAIL_THRESHOLD, TokenInfo, TokenPoolStats, TokenStatus,
+    DEFAULT_QUOTA, EffortType, TokenInfo, TokenPoolStats, TokenStatus,
 };
 use crate::services::token::pool::TokenPool;
 
@@ -171,6 +171,7 @@ impl TokenManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn record_fail(&mut self, token_str: &str, status_code: u16, reason: &str) -> bool {
         let raw = token_str.trim_start_matches("sso=");
         for pool in self.pools.values_mut() {
@@ -183,6 +184,7 @@ impl TokenManager {
         false
     }
 
+    #[allow(dead_code)]
     pub async fn add(&mut self, token: &str, pool_name: &str) -> bool {
         let raw = token.trim_start_matches("sso=");
         let pool = self
@@ -197,6 +199,7 @@ impl TokenManager {
         true
     }
 
+    #[allow(dead_code)]
     pub async fn remove(&mut self, token: &str) -> bool {
         for pool in self.pools.values_mut() {
             if pool.remove(token) {
@@ -207,6 +210,7 @@ impl TokenManager {
         false
     }
 
+    #[allow(dead_code)]
     pub async fn reset_all(&mut self) {
         for pool in self.pools.values_mut() {
             for token in pool.list() {
@@ -218,6 +222,7 @@ impl TokenManager {
         self.save().await;
     }
 
+    #[allow(dead_code)]
     pub async fn reset_token(&mut self, token_str: &str) -> bool {
         let raw = token_str.trim_start_matches("sso=");
         for pool in self.pools.values_mut() {
@@ -230,6 +235,7 @@ impl TokenManager {
         false
     }
 
+    #[allow(dead_code)]
     pub fn get_stats(&self) -> HashMap<String, TokenPoolStats> {
         let mut stats = HashMap::new();
         for (name, pool) in &self.pools {
@@ -238,6 +244,7 @@ impl TokenManager {
         stats
     }
 
+    #[allow(dead_code)]
     pub fn get_pool_tokens(&self, pool_name: &str) -> Vec<TokenInfo> {
         self.pools
             .get(pool_name)
@@ -245,6 +252,7 @@ impl TokenManager {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn has_tag(&self, token: &str, tag: &str) -> bool {
         let raw = token.trim_start_matches("sso=");
         for pool in self.pools.values() {

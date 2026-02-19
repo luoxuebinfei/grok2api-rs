@@ -5,6 +5,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum ErrorType {
     InvalidRequestError,
     AuthenticationError,
@@ -76,6 +77,7 @@ impl ApiError {
         .with_code("invalid_api_key")
     }
 
+    #[allow(dead_code)]
     pub fn permission(message: impl Into<String>) -> Self {
         ApiError::new(StatusCode::FORBIDDEN, message, ErrorType::PermissionError)
             .with_code("insufficient_quota")

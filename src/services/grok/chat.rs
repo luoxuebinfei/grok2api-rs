@@ -439,6 +439,7 @@ impl ChatService {
 
 pub type LineStream = Pin<Box<dyn Stream<Item = String> + Send>>;
 
+#[allow(dead_code)]
 pub enum ChatResult {
     Stream {
         stream: LineStream,

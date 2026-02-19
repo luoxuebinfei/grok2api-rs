@@ -36,6 +36,7 @@ impl TokenRefreshScheduler {
         }));
     }
 
+    #[allow(dead_code)]
     pub fn stop(&mut self) {
         self.running = false;
         if let Some(handle) = self.handle.take() {

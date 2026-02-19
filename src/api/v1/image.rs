@@ -25,6 +25,7 @@ use crate::services::grok::processor::{ImageCollectProcessor, ImageStreamProcess
 use crate::services::token::{EffortType, TokenService};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ImageRequest {
     pub prompt: String,
     pub model: Option<String>,

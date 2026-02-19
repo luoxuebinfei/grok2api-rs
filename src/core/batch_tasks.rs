@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use uuid::Uuid;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BatchTask {
     pub id: String,
     pub total: usize,
@@ -115,6 +116,7 @@ impl BatchTask {
         self.publish(event);
     }
 
+    #[allow(dead_code)]
     pub fn fail_task(&mut self, error: String) {
         self.status = "error".to_string();
         self.error = Some(error.clone());

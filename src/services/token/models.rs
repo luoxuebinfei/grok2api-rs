@@ -24,6 +24,7 @@ pub fn effort_cost(effort: &EffortType) -> i32 {
 }
 
 pub const DEFAULT_QUOTA: i32 = 80;
+#[allow(dead_code)]
 pub const FAIL_THRESHOLD: i32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,7 @@ pub struct TokenInfo {
 }
 
 impl TokenInfo {
+    #[allow(dead_code)]
     pub fn new(token: String) -> Self {
         Self {
             token,
@@ -66,6 +68,7 @@ impl TokenInfo {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_available(&self) -> bool {
         self.status == TokenStatus::Active && self.quota > 0
     }
@@ -95,6 +98,7 @@ impl TokenInfo {
         }
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.quota = DEFAULT_QUOTA;
         self.status = TokenStatus::Active;
@@ -102,6 +106,7 @@ impl TokenInfo {
         self.last_fail_reason = None;
     }
 
+    #[allow(dead_code)]
     pub fn record_fail(&mut self, status_code: u16, reason: &str) {
         if status_code != 401 {
             return;

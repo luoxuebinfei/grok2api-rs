@@ -101,6 +101,7 @@ async fn acquire_file_lock(name: &str, timeout: u64) -> Result<std::fs::File, Ap
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct BaseService {
     pub proxy: String,
     pub timeout: u64,
@@ -129,6 +130,7 @@ impl BaseService {
         }
     }
 
+    #[allow(dead_code)]
     pub fn client(&self) -> Client {
         self.client.clone()
     }
@@ -414,6 +416,7 @@ impl DeleteService {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct DownloadService {
     base: BaseService,
     base_dir: PathBuf,
@@ -726,6 +729,7 @@ impl DownloadService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn get_public_url(&self, file_path: &str) -> String {
         let app_url: String = get_config("app.app_url", String::new()).await;
         if app_url.is_empty() {

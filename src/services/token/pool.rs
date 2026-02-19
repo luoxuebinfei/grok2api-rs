@@ -3,6 +3,7 @@ use rand::seq::SliceRandom;
 use crate::services::token::models::{TokenInfo, TokenPoolStats, TokenStatus};
 
 #[derive(Debug, Default, Clone)]
+#[allow(dead_code)]
 pub struct TokenPool {
     pub name: String,
     tokens: Vec<TokenInfo>,
@@ -20,6 +21,7 @@ impl TokenPool {
         self.tokens.push(token);
     }
 
+    #[allow(dead_code)]
     pub fn remove(&mut self, token: &str) -> bool {
         let before = self.tokens.len();
         self.tokens.retain(|t| t.token != token);
@@ -57,6 +59,7 @@ impl TokenPool {
         self.tokens.len()
     }
 
+    #[allow(dead_code)]
     pub fn stats(&self) -> TokenPoolStats {
         let mut stats = TokenPoolStats::default();
         stats.total = self.tokens.len();
