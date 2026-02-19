@@ -3,7 +3,6 @@ use std::pin::Pin;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::time::Duration;
 
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
@@ -170,26 +169,21 @@ impl ChatRequestBuilder {
         let temporary: bool = get_config("grok.temporary", true).await;
         let _think = think.unwrap_or(get_config("grok.thinking", false).await);
 
-        // 构建 modelConfigOverride
+        // 构建 modelConfigOverride（扁平结构，与官网一致）
         let config_override = if let Some(mco) = model_config_override {
             mco.clone()
         } else {
-            let mut override_obj = serde_json::json!({"modelMap": {}});
-            // 写入 temperature / topP / reasoningEffort
-            if temperature.is_some() || top_p.is_some() || reasoning_effort.is_some() {
-                let mut config = serde_json::json!({});
-                if let Some(t) = temperature {
-                    config["temperature"] = serde_json::json!(t);
-                }
-                if let Some(p) = top_p {
-                    config["topP"] = serde_json::json!(p);
-                }
-                if let Some(re) = reasoning_effort {
-                    config["reasoningEffort"] = serde_json::json!(re);
-                }
-                override_obj["modelConfigOverride"] = config;
+            let mut config = serde_json::json!({});
+            if let Some(t) = temperature {
+                config["temperature"] = serde_json::json!(t);
             }
-            override_obj
+            if let Some(p) = top_p {
+                config["topP"] = serde_json::json!(p);
+            }
+            if let Some(re) = reasoning_effort {
+                config["reasoningEffort"] = serde_json::json!(re);
+            }
+            config
         };
 
         let tools = if let Some(to) = tool_overrides {
@@ -311,7 +305,6 @@ impl GrokChatService {
         let proxy: String = get_config("grok.base_proxy_url", String::new()).await;
         let client = build_client(Some(&proxy), timeout).await?;
         let request = apply_headers(client.post(CHAT_API), &headers)
-            .timeout(Duration::from_secs(timeout))
             .body(payload.to_string());
 
         let response = request

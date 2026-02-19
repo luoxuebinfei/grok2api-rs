@@ -29,18 +29,34 @@ fn extract_tool_text(raw: &str, rollout_id: &str) -> String {
 
     match tool_name.as_str() {
         "web_search" => {
-            let query = extract_json_field(&tool_args, "query").unwrap_or(tool_args.clone());
+            let query = extract_json_field(&tool_args, "query")
+                .or_else(|| extract_json_field(&tool_args, "q"))
+                .unwrap_or(tool_args.clone());
             format!("{prefix}[WebSearch] {query}\n")
         }
         "search_images" => {
-            let desc =
-                extract_json_field(&tool_args, "description").unwrap_or(tool_args.clone());
+            let desc = extract_json_field(&tool_args, "image_description")
+                .or_else(|| extract_json_field(&tool_args, "description"))
+                .or_else(|| extract_json_field(&tool_args, "query"))
+                .unwrap_or(tool_args.clone());
             format!("{prefix}[SearchImage] {desc}\n")
         }
         "chatroom_send" => {
             let message =
                 extract_json_field(&tool_args, "message").unwrap_or(tool_args.clone());
-            format!("{prefix}[AgentThink] {message}\n")
+            // 提取接收者 agent 名称（"to" 字段）
+            let recipient = extract_json_field(&tool_args, "to")
+                .or_else(|| extract_json_field(&tool_args, "recipient"));
+            // 格式: [Agent 1 → Grok] message
+            if let Some(to) = recipient {
+                if rollout_id.is_empty() {
+                    format!("[→{to}] {message}\n")
+                } else {
+                    format!("[{rollout_id} → {to}] {message}\n")
+                }
+            } else {
+                format!("{prefix}[AgentThink] {message}\n")
+            }
         }
         _ => {
             if !tool_name.is_empty() {
@@ -409,11 +425,9 @@ impl StreamProcessor {
                 if let Some(rid) = resp.get("responseId").and_then(|v| v.as_str()) {
                     self.response_id = Some(rid.to_string());
                 }
-                // 捕获 rolloutId
+                // 捕获 rolloutId（每次更新，支持多 agent 切换）
                 if let Some(rid) = resp.get("rolloutId").and_then(|v| v.as_str()) {
-                    if self.rollout_id.is_empty() {
-                        self.rollout_id = rid.to_string();
-                    }
+                    self.rollout_id = rid.to_string();
                 }
 
                 if !self.role_sent {
@@ -526,7 +540,16 @@ impl StreamProcessor {
 
                         // 过滤 tool_usage_card 和 filter_tags
                         let filtered = self.filter_tool_card(token);
-                        if !filtered.is_empty() && !self.filter_tags.iter().any(|t| filtered.contains(t)) {
+                        if !filtered.is_empty() && !self.filter_tags.iter().any(|t| {
+                            // xai:tool_usage_card 已被 filter_tool_card 处理，跳过
+                            if t == "xai:tool_usage_card" {
+                                return false;
+                            }
+                            // 只匹配 XML 标签形式 <tag / </tag
+                            let open = format!("<{}", t);
+                            let close = format!("</{}", t);
+                            filtered.contains(&open) || filtered.contains(&close)
+                        }) {
                             has_content = true;
                             let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&filtered), None, None);
@@ -623,9 +646,7 @@ impl CollectProcessor {
                     response_id = rid.to_string();
                 }
                 if let Some(rid) = resp.get("rolloutId").and_then(|v| v.as_str()) {
-                    if rollout_id.is_empty() {
-                        rollout_id = rid.to_string();
-                    }
+                    rollout_id = rid.to_string();
                 }
 
                 // 处理 cardAttachment（流式中出现的卡片）

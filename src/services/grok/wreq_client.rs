@@ -27,7 +27,6 @@ pub async fn build_client_with_emulation(
 
     let mut builder = Client::builder()
         .emulation(emulation)
-        .timeout(Duration::from_secs(timeout_secs.max(1)))
         .connect_timeout(Duration::from_secs(timeout_secs.clamp(5, 30)));
 
     if let Some(proxy_url) = proxy {
