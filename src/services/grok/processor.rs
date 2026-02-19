@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::time::Duration;
 
 use async_stream::stream;
 use bytes::Bytes;
@@ -373,8 +374,15 @@ impl StreamProcessor {
         S: Stream<Item = String> + Send + 'static,
     {
         stream! {
+            let heartbeat_interval: u64 = get_config("grok.stream_heartbeat_interval", 15u64).await;
             let mut stream = Box::pin(input);
-            while let Some(line) = stream.next().await {
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_secs(heartbeat_interval),
+                    stream.next()
+                ).await {
+                    Ok(Some(line)) => {
+                // 原有处理逻辑
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -516,6 +524,14 @@ impl StreamProcessor {
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&filtered), None, None);
                             yield Ok(Bytes::from(chunk));
                         }
+                    }
+                }
+                    }
+                    Ok(None) => break, // 流结束
+                    Err(_) => {
+                        // 超时，发送 SSE 心跳注释保持连接
+                        yield Ok(Bytes::from(": heartbeat\n\n"));
+                        continue;
                     }
                 }
             }
@@ -693,8 +709,14 @@ impl VideoStreamProcessor {
         S: Stream<Item = String> + Send + 'static,
     {
         stream! {
+            let heartbeat_interval: u64 = get_config("grok.stream_heartbeat_interval", 15u64).await;
             let mut stream = Box::pin(input);
-            while let Some(line) = stream.next().await {
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_secs(heartbeat_interval),
+                    stream.next()
+                ).await {
+                    Ok(Some(line)) => {
                 if line.trim().is_empty() { continue; }
                 let data: JsonValue = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
                 let resp = data.get("result").and_then(|v| v.get("response")).cloned().unwrap_or(JsonValue::Null);
@@ -751,6 +773,14 @@ impl VideoStreamProcessor {
                             let chunk = self.base.sse_chunk(&id, "", Some(&html), None, None);
                             yield Ok(Bytes::from(chunk));
                         }
+                    }
+                }
+                    }
+                    Ok(None) => break, // 流结束
+                    Err(_) => {
+                        // 超时，发送 SSE 心跳注释保持连接
+                        yield Ok(Bytes::from(": heartbeat\n\n"));
+                        continue;
                     }
                 }
             }
@@ -896,9 +926,15 @@ impl ImageStreamProcessor {
         S: Stream<Item = String> + Send + 'static,
     {
         stream! {
+            let heartbeat_interval: u64 = get_config("grok.stream_heartbeat_interval", 15u64).await;
             let mut final_images: Vec<JsonValue> = Vec::new();
             let mut stream = Box::pin(input);
-            while let Some(line) = stream.next().await {
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_secs(heartbeat_interval),
+                    stream.next()
+                ).await {
+                    Ok(Some(line)) => {
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -957,6 +993,14 @@ impl ImageStreamProcessor {
                                 }
                             }
                         }
+                    }
+                }
+                    }
+                    Ok(None) => break, // 流结束
+                    Err(_) => {
+                        // 超时，发送 SSE 心跳注释保持连接
+                        yield Ok(Bytes::from(": heartbeat\n\n"));
+                        continue;
                     }
                 }
             }
