@@ -376,6 +376,8 @@ impl StreamProcessor {
         stream! {
             let heartbeat_interval: u64 = get_config("grok.stream_heartbeat_interval", 15u64).await;
             let mut stream = Box::pin(input);
+            let mut has_content = false;
+            let mut stream_error: Option<String> = None;
             loop {
                 match tokio::time::timeout(
                     Duration::from_secs(heartbeat_interval),
@@ -385,6 +387,11 @@ impl StreamProcessor {
                 // 原有处理逻辑
                 if line.trim().is_empty() {
                     continue;
+                }
+                // 检测流错误标记
+                if let Some(err_msg) = line.strip_prefix("{\"__stream_error__\":\"") {
+                    stream_error = Some(err_msg.trim_end_matches("\"}").replace("\\\"", "\"").to_string());
+                    break;
                 }
                 let data: JsonValue = match serde_json::from_str(&line) {
                     Ok(v) => v,
@@ -520,6 +527,7 @@ impl StreamProcessor {
                         // 过滤 tool_usage_card 和 filter_tags
                         let filtered = self.filter_tool_card(token);
                         if !filtered.is_empty() && !self.filter_tags.iter().any(|t| filtered.contains(t)) {
+                            has_content = true;
                             let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&filtered), None, None);
                             yield Ok(Bytes::from(chunk));
@@ -539,6 +547,19 @@ impl StreamProcessor {
                 let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                 let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("</think>\n"), None, None);
                 yield Ok(Bytes::from(chunk));
+            }
+            // 流异常中断且无有效内容时，输出错误提示
+            if let Some(ref err) = stream_error {
+                if !has_content {
+                    let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
+                    if !self.role_sent {
+                        let role_chunk = self.base.sse_chunk(&id, &self.fingerprint, None, Some("assistant"), None);
+                        yield Ok(Bytes::from(role_chunk));
+                    }
+                    let error_msg = format!("[upstream error] 上游连接中断，未收到有效响应: {err}");
+                    let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&error_msg), None, None);
+                    yield Ok(Bytes::from(chunk));
+                }
             }
             let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
             let chunk = self.base.sse_chunk(&id, &self.fingerprint, None, None, Some("stop"));
@@ -571,10 +592,16 @@ impl CollectProcessor {
             let mut fingerprint = String::new();
             let mut content = String::new();
             let mut rollout_id = String::new();
+            let mut stream_error: Option<String> = None;
             let mut stream = Box::pin(input);
             while let Some(line) = stream.next().await {
                 if line.trim().is_empty() {
                     continue;
+                }
+                // 检测流错误标记
+                if let Some(err_msg) = line.strip_prefix("{\"__stream_error__\":\"") {
+                    stream_error = Some(err_msg.trim_end_matches("\"}").replace("\\\"", "\"").to_string());
+                    break;
                 }
                 let data: JsonValue = match serde_json::from_str(&line) {
                     Ok(v) => v,
@@ -644,6 +671,13 @@ impl CollectProcessor {
 
             // 非流式后处理：过滤 tool_usage_card
             content = filter_tool_usage_content(&content, &rollout_id);
+
+            // 流异常中断且无有效内容时，填充错误信息
+            if content.trim().is_empty() {
+                if let Some(ref err) = stream_error {
+                    content = format!("[upstream error] 上游连接中断，未收到有效响应: {err}");
+                }
+            }
 
             serde_json::json!({
                 "id": response_id,

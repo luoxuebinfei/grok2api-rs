@@ -359,18 +359,14 @@ impl GrokChatService {
         let (message, attachments) = MessageExtractor::extract(&request.messages, is_video)?;
 
         let mut file_ids = Vec::new();
-        let mut image_ids = Vec::new();
         if !attachments.is_empty() {
             let uploader = UploadService::new().await;
-            for (kind, data) in attachments {
+            for (_kind, data) in attachments {
                 let (file_id, _) = uploader.upload(&data, token).await?;
-                if kind == "image" {
-                    image_ids.push(file_id);
-                } else {
-                    file_ids.push(file_id);
-                }
+                file_ids.push(file_id);
             }
         }
+        let image_ids: Vec<String> = Vec::new();
 
         let stream = request
             .stream

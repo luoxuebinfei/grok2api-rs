@@ -199,6 +199,7 @@ pub fn line_stream_from_response(response: wreq::Response) -> PinLineStream {
                 }
                 Err(err) => {
                     tracing::warn!("wreq stream read failed: {err}");
+                    yield format!("{{\"__stream_error__\":\"{}\"}}", err.to_string().replace('"', "\\\""));
                     break;
                 }
             }
