@@ -9,11 +9,13 @@ use serde_json::{Value as JsonValue, json};
 use crate::core::auth::verify_api_key;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
-use crate::services::grok::chat::{ChatResult, ChatService};
+use crate::services::grok::chat::{ChatResult, ChatService, MessageExtractor};
+use crate::services::grok::image_edit::ImageEditService;
 use crate::services::grok::media::{VideoResult, VideoService};
 use crate::services::grok::model::{Cost, ModelService};
 use crate::services::grok::processor::{
-    CollectProcessor, StreamProcessor, VideoCollectProcessor, VideoStreamProcessor,
+    CollectProcessor, ImageStreamProcessor, StreamProcessor,
+    VideoCollectProcessor, VideoStreamProcessor,
 };
 use crate::services::token::{EffortType, TokenService};
 
@@ -35,6 +37,9 @@ pub struct ChatCompletionRequest {
     pub stream: Option<bool>,
     pub thinking: Option<String>,
     pub video_config: Option<VideoConfig>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub reasoning_effort: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -199,9 +204,10 @@ async fn chat_completions(
                 model,
                 think,
                 is_stream,
+                upscale_on_finish,
             } => {
                 if is_stream {
-                    let processor = VideoStreamProcessor::new(&model, &token, think).await;
+                    let processor = VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
                     } else {
@@ -221,7 +227,7 @@ async fn chat_completions(
                     headers.insert("Content-Type", "text/event-stream".parse().unwrap());
                     Ok((headers, axum::body::Body::from_stream(body_stream)).into_response())
                 } else {
-                    let processor = VideoCollectProcessor::new(&model, &token).await;
+                    let processor = VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
                     let result = processor.process(line_stream).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
@@ -234,12 +240,82 @@ async fn chat_completions(
             }
             VideoResult::Json(json) => Ok((StatusCode::OK, Json(json)).into_response()),
         }
+    } else if model_info.is_image_edit {
+        // 图片编辑分支：从消息中提取文本和图片
+        let (prompt, attachments) =
+            MessageExtractor::extract(&req.messages, false)?;
+        let image_data: Vec<String> = attachments
+            .into_iter()
+            .filter(|(kind, _)| kind == "image")
+            .map(|(_, data)| data)
+            .collect();
+        if image_data.is_empty() {
+            return Err(ApiError::invalid_request(
+                "Image edit requires at least one image in messages",
+            ));
+        }
+
+        let token = TokenService::get_token_for_model(&req.model).await?;
+        let is_stream = req.stream.unwrap_or(get_config("grok.stream", true).await);
+        let image_format: String = get_config("app.image_format", "url".to_string()).await;
+        let return_base64 = image_format == "base64" || image_format == "b64_json";
+        let n: usize = 1;
+        let effort = if model_info.cost == Cost::High {
+            EffortType::High
+        } else {
+            EffortType::Low
+        };
+
+        if is_stream {
+            let response = ImageEditService::edit_stream(
+                &token,
+                &model_info,
+                &prompt,
+                &image_data,
+                n,
+                return_base64,
+            )
+            .await?;
+            let processor =
+                ImageStreamProcessor::new(&req.model, &token, n, return_base64).await;
+            let token_clone = token.clone();
+            let body_stream = stream! {
+                let mut inner = Box::pin(processor.process(response));
+                while let Some(item) = inner.as_mut().next().await {
+                    yield item;
+                }
+                let _ = TokenService::consume(&token_clone, effort).await;
+            };
+            let mut headers = HeaderMap::new();
+            headers.insert("Cache-Control", "no-cache".parse().unwrap());
+            headers.insert("Connection", "keep-alive".parse().unwrap());
+            headers.insert("Content-Type", "text/event-stream".parse().unwrap());
+            Ok((headers, axum::body::Body::from_stream(body_stream)).into_response())
+        } else {
+            let images = ImageEditService::edit_collect(
+                &token,
+                &model_info,
+                &prompt,
+                &image_data,
+                n,
+                return_base64,
+            )
+            .await?;
+            let _ = TokenService::consume(&token, effort).await;
+            let created = chrono::Utc::now().timestamp();
+            let usage = json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0});
+            let resp = json!({"created": created, "data": images, "usage": usage});
+            Ok((StatusCode::OK, Json(resp)).into_response())
+        }
     } else {
         let result = ChatService::completions(
             &req.model,
             req.messages.clone(),
             req.stream,
             req.thinking.clone(),
+            req.temperature,
+            req.top_p,
+            req.reasoning_effort.clone(),
         )
         .await?;
         match result {

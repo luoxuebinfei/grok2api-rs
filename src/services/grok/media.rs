@@ -19,6 +19,7 @@ use crate::services::token::TokenService;
 
 const CREATE_POST_API: &str = "https://grok.com/rest/media/post/create";
 const CHAT_API: &str = "https://grok.com/rest/app-chat/conversations/new";
+const VIDEO_UPSCALE_API: &str = "https://grok.com/rest/media/video/upscale";
 
 static MEDIA_SEM: once_cell::sync::Lazy<Arc<Semaphore>> =
     once_cell::sync::Lazy::new(|| Arc::new(Semaphore::new(50)));
@@ -33,50 +34,7 @@ impl VideoService {
     }
 
     async fn build_headers(&self, token: &str, referer: &str) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Accept", "*/*".parse().unwrap());
-        headers.insert(
-            "Accept-Encoding",
-            "gzip, deflate, br, zstd".parse().unwrap(),
-        );
-        headers.insert("Accept-Language", "zh-CN,zh;q=0.9".parse().unwrap());
-        headers.insert("Baggage", "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c".parse().unwrap());
-        headers.insert("Cache-Control", "no-cache".parse().unwrap());
-        headers.insert("Content-Type", "application/json".parse().unwrap());
-        headers.insert("Origin", "https://grok.com".parse().unwrap());
-        headers.insert("Pragma", "no-cache".parse().unwrap());
-        headers.insert("Priority", "u=1, i".parse().unwrap());
-        headers.insert("Referer", referer.parse().unwrap());
-        headers.insert(
-            "Sec-Ch-Ua",
-            "\"Google Chrome\";v=\"136\", \"Chromium\";v=\"136\", \"Not(A:Brand\";v=\"24\""
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("Sec-Ch-Ua-Arch", "arm".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Bitness", "64".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Mobile", "?0".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Model", "".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Platform", "\"macOS\"".parse().unwrap());
-        headers.insert("Sec-Fetch-Dest", "empty".parse().unwrap());
-        headers.insert("Sec-Fetch-Mode", "cors".parse().unwrap());
-        headers.insert("Sec-Fetch-Site", "same-origin".parse().unwrap());
-        headers.insert("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36".parse().unwrap());
-        let statsig = StatsigService::gen_id().await;
-        headers.insert("x-statsig-id", statsig.parse().unwrap());
-        headers.insert(
-            "x-xai-request-id",
-            uuid::Uuid::new_v4().to_string().parse().unwrap(),
-        );
-        let raw = token.strip_prefix("sso=").unwrap_or(token);
-        let cf: String = get_config("grok.cf_clearance", String::new()).await;
-        let cookie = if cf.is_empty() {
-            format!("sso={raw}")
-        } else {
-            format!("sso={raw};cf_clearance={cf}")
-        };
-        headers.insert("Cookie", cookie.parse().unwrap());
-        headers
+        crate::services::grok::headers::build_grok_headers(token, None, Some(referer)).await
     }
 
     async fn create_post(&self, token: &str, prompt: &str) -> Result<String, ApiError> {
@@ -93,7 +51,7 @@ impl VideoService {
             .to_string())
     }
 
-    async fn create_image_post(&self, token: &str, image_url: &str) -> Result<String, ApiError> {
+    pub async fn create_image_post(&self, token: &str, image_url: &str) -> Result<String, ApiError> {
         let headers = self.build_headers(token, "https://grok.com/imagine").await;
         let payload =
             serde_json::json!({"mediaType": "MEDIA_POST_TYPE_IMAGE", "mediaUrl": image_url});
@@ -342,10 +300,11 @@ impl VideoService {
 
         Ok(VideoResult::Stream {
             stream: line_stream,
-            token,
+            token: token.clone(),
             model: model.to_string(),
             think,
             is_stream,
+            upscale_on_finish: resolution == "720p",
         })
     }
 }
@@ -357,6 +316,106 @@ pub enum VideoResult {
         model: String,
         think: Option<bool>,
         is_stream: bool,
+        upscale_on_finish: bool,
     },
     Json(JsonValue),
+}
+
+/// 从视频 URL 中提取 video_id (UUID)
+pub fn extract_video_id(video_url: &str) -> Option<String> {
+    if video_url.is_empty() {
+        return None;
+    }
+    // 匹配 /UUID/generated_video 模式
+    let parts: Vec<&str> = video_url.split('/').collect();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "generated_video" && i > 0 {
+            let candidate = parts[i - 1];
+            // UUID 长度 32-36 字符
+            if candidate.len() >= 32 && candidate.len() <= 36 {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub struct VideoUpscaleService;
+
+impl VideoUpscaleService {
+    /// 调用视频 upscale 接口，返回 HD URL
+    pub async fn upscale(token: &str, video_url: &str) -> Option<String> {
+        let video_id = extract_video_id(video_url)?;
+        if video_id.is_empty() {
+            tracing::warn!("Video upscale skipped: unable to extract video id");
+            return None;
+        }
+
+        let proxy: String = get_config("grok.base_proxy_url", String::new()).await;
+        let timeout: u64 = get_config("grok.timeout", 60u64).await;
+
+        let client = match build_client(Some(&proxy), timeout).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Video upscale client build failed: {e}");
+                return None;
+            }
+        };
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("Accept", "*/*".parse().unwrap());
+        headers.insert("Content-Type", "application/json".parse().unwrap());
+        headers.insert("Origin", "https://grok.com".parse().unwrap());
+        headers.insert("Referer", "https://grok.com/".parse().unwrap());
+        let raw = token.strip_prefix("sso=").unwrap_or(token);
+        let cf: String = get_config("grok.cf_clearance", String::new()).await;
+        let cookie = if cf.is_empty() {
+            format!("sso={raw}")
+        } else {
+            format!("sso={raw};cf_clearance={cf}")
+        };
+        headers.insert("Cookie", cookie.parse().unwrap());
+        let statsig = StatsigService::gen_id().await;
+        headers.insert("x-statsig-id", statsig.parse().unwrap());
+        headers.insert(
+            "x-xai-request-id",
+            uuid::Uuid::new_v4().to_string().parse().unwrap(),
+        );
+
+        let payload = serde_json::json!({"videoId": video_id});
+
+        let response = match apply_headers(client.post(VIDEO_UPSCALE_API), &headers)
+            .timeout(Duration::from_secs(timeout))
+            .body(payload.to_string())
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Video upscale request failed: {e}");
+                return None;
+            }
+        };
+
+        if response.status().as_u16() != 200 {
+            tracing::warn!("Video upscale failed with status: {}", response.status());
+            return None;
+        }
+
+        let body: JsonValue = match response.text().await {
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(_) => return None,
+            },
+            Err(_) => return None,
+        };
+
+        let hd_url = body.get("hdMediaUrl").and_then(|v| v.as_str());
+        if let Some(url) = hd_url {
+            tracing::info!("Video upscale completed: {url}");
+            Some(url.to_string())
+        } else {
+            None
+        }
+    }
 }

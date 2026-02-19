@@ -7,6 +7,7 @@ use crate::core::exceptions::ApiError;
 use crate::services::grok::grpc_web::{
     encode_grpc_web_payload, get_grpc_status, parse_grpc_web_response,
 };
+use crate::services::grok::headers::{build_cookie, get_matched_user_agent};
 use crate::services::grok::wreq_client::{
     apply_headers, body_preview as body_preview_text, build_client_with_emulation,
 };
@@ -46,12 +47,8 @@ impl NsfwService {
         );
         headers.insert("origin", "https://grok.com".parse().unwrap());
         headers.insert("referer", "https://grok.com/".parse().unwrap());
-        headers.insert(
-            "user-agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-                .parse()
-                .unwrap(),
-        );
+        let ua = get_matched_user_agent().await;
+        headers.insert("user-agent", ua.parse().unwrap());
         headers.insert("x-grpc-web", "1".parse().unwrap());
         headers.insert("x-user-agent", "connect-es/2.1.1".parse().unwrap());
         let cookie = build_cookie(token).await;
@@ -319,15 +316,13 @@ impl NsfwService {
         let timeout: u64 = get_config("grok.timeout", 30u64).await;
         let proxy: String = get_config("grok.base_proxy_url", String::new()).await;
         let cookie = build_cookie(token).await;
+        let ua = get_matched_user_agent().await;
 
         let client = build_client_with_emulation(Some(&proxy), timeout, emulation_override).await?;
         let response = client
             .post(AGE_VERIFY_API)
             .timeout(Duration::from_secs(timeout.max(1)))
-            .header(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-            )
+            .header("User-Agent", &ua)
             .header("Origin", "https://grok.com")
             .header("Referer", "https://grok.com/")
             .header("Accept", "*/*")
@@ -374,16 +369,6 @@ impl NsfwService {
                 "HTTP {status}; content-type: {content_type}; body: {preview}"
             )),
         })
-    }
-}
-
-async fn build_cookie(token: &str) -> String {
-    let raw = token.strip_prefix("sso=").unwrap_or(token);
-    let cf: String = get_config("grok.cf_clearance", String::new()).await;
-    if cf.trim().is_empty() {
-        format!("sso={raw}; sso-rw={raw}")
-    } else {
-        format!("sso={raw}; sso-rw={raw}; cf_clearance={}", cf.trim())
     }
 }
 

@@ -404,6 +404,7 @@ async fn verify_age(token: &str) -> bool {
         "sso={raw}; sso-rw={raw}; cf_clearance={}",
         cf_clearance.trim()
     );
+    let ua = crate::services::grok::headers::get_matched_user_agent().await;
 
     let client =
         match crate::services::grok::wreq_client::build_client(Some(&proxy), timeout_secs).await {
@@ -417,7 +418,7 @@ async fn verify_age(token: &str) -> bool {
     let response = match client
         .post(AGE_VERIFY_URL)
         .timeout(Duration::from_secs(timeout_secs.max(1)))
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
+        .header("User-Agent", &ua)
         .header("Origin", "https://grok.com")
         .header("Referer", "https://grok.com/")
         .header("Accept", "*/*")
@@ -539,7 +540,8 @@ async fn do_generate(
     if let Ok(val) = "https://grok.com".parse() {
         request.headers_mut().insert("Origin", val);
     }
-    if let Ok(val) = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36".parse() {
+    let ws_ua = crate::services::grok::headers::get_matched_user_agent().await;
+    if let Ok(val) = ws_ua.parse() {
         request.headers_mut().insert("User-Agent", val);
     }
     if let Ok(val) = "zh-CN,zh;q=0.9,en;q=0.8".parse() {

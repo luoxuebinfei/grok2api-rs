@@ -8,8 +8,8 @@ use std::time::Duration;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 use crate::services::grok::assets::UploadService;
+use crate::services::grok::headers::build_grok_headers;
 use crate::services::grok::model::ModelService;
-use crate::services::grok::statsig::StatsigService;
 use crate::services::grok::wreq_client::{
     apply_headers, body_preview, build_client, line_stream_from_response,
 };
@@ -23,6 +23,9 @@ pub struct ChatRequest {
     pub messages: Vec<JsonValue>,
     pub stream: Option<bool>,
     pub think: Option<bool>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub reasoning_effort: Option<String>,
 }
 
 pub struct MessageExtractor;
@@ -148,50 +151,7 @@ pub struct ChatRequestBuilder;
 
 impl ChatRequestBuilder {
     pub async fn build_headers(token: &str) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Accept", "*/*".parse().unwrap());
-        headers.insert(
-            "Accept-Encoding",
-            "gzip, deflate, br, zstd".parse().unwrap(),
-        );
-        headers.insert("Accept-Language", "zh-CN,zh;q=0.9".parse().unwrap());
-        headers.insert("Baggage", "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c".parse().unwrap());
-        headers.insert("Cache-Control", "no-cache".parse().unwrap());
-        headers.insert("Content-Type", "application/json".parse().unwrap());
-        headers.insert("Origin", "https://grok.com".parse().unwrap());
-        headers.insert("Pragma", "no-cache".parse().unwrap());
-        headers.insert("Priority", "u=1, i".parse().unwrap());
-        headers.insert("Referer", "https://grok.com/".parse().unwrap());
-        headers.insert(
-            "Sec-Ch-Ua",
-            "\"Google Chrome\";v=\"136\", \"Chromium\";v=\"136\", \"Not(A:Brand\";v=\"24\""
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("Sec-Ch-Ua-Arch", "arm".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Bitness", "64".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Mobile", "?0".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Model", "".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Platform", "\"macOS\"".parse().unwrap());
-        headers.insert("Sec-Fetch-Dest", "empty".parse().unwrap());
-        headers.insert("Sec-Fetch-Mode", "cors".parse().unwrap());
-        headers.insert("Sec-Fetch-Site", "same-origin".parse().unwrap());
-        headers.insert("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36".parse().unwrap());
-        let statsig = StatsigService::gen_id().await;
-        headers.insert("x-statsig-id", statsig.parse().unwrap());
-        headers.insert(
-            "x-xai-request-id",
-            uuid::Uuid::new_v4().to_string().parse().unwrap(),
-        );
-        let raw = token.strip_prefix("sso=").unwrap_or(token);
-        let cf: String = get_config("grok.cf_clearance", String::new()).await;
-        let cookie = if cf.is_empty() {
-            format!("sso={raw}")
-        } else {
-            format!("sso={raw};cf_clearance={cf}")
-        };
-        headers.insert("Cookie", cookie.parse().unwrap());
-        headers
+        build_grok_headers(token, None, None).await
     }
 
     pub async fn build_payload(
@@ -201,9 +161,43 @@ impl ChatRequestBuilder {
         think: Option<bool>,
         file_attachments: &[String],
         image_attachments: &[String],
+        temperature: Option<f64>,
+        top_p: Option<f64>,
+        reasoning_effort: Option<&str>,
+        tool_overrides: Option<&JsonValue>,
+        model_config_override: Option<&JsonValue>,
     ) -> JsonValue {
         let temporary: bool = get_config("grok.temporary", true).await;
         let _think = think.unwrap_or(get_config("grok.thinking", false).await);
+
+        // 构建 modelConfigOverride
+        let config_override = if let Some(mco) = model_config_override {
+            mco.clone()
+        } else {
+            let mut override_obj = serde_json::json!({"modelMap": {}});
+            // 写入 temperature / topP / reasoningEffort
+            if temperature.is_some() || top_p.is_some() || reasoning_effort.is_some() {
+                let mut config = serde_json::json!({});
+                if let Some(t) = temperature {
+                    config["temperature"] = serde_json::json!(t);
+                }
+                if let Some(p) = top_p {
+                    config["topP"] = serde_json::json!(p);
+                }
+                if let Some(re) = reasoning_effort {
+                    config["reasoningEffort"] = serde_json::json!(re);
+                }
+                override_obj["modelConfigOverride"] = config;
+            }
+            override_obj
+        };
+
+        let tools = if let Some(to) = tool_overrides {
+            to.clone()
+        } else {
+            serde_json::json!({})
+        };
+
         serde_json::json!({
             "temporary": temporary,
             "modelName": model,
@@ -218,13 +212,13 @@ impl ChatRequestBuilder {
             "enableImageStreaming": true,
             "imageGenerationCount": 2,
             "forceConcise": false,
-            "toolOverrides": {},
+            "toolOverrides": tools,
             "enableSideBySide": true,
             "sendFinalMetadata": true,
             "isReasoning": false,
             "disableTextFollowUps": false,
             "responseMetadata": {
-                "modelConfigOverride": {"modelMap": {}},
+                "modelConfigOverride": config_override,
                 "requestModelDetails": {"modelId": model},
             },
             "disableMemory": false,
@@ -260,6 +254,11 @@ impl GrokChatService {
         _stream: bool,
         file_attachments: &[String],
         image_attachments: &[String],
+        temperature: Option<f64>,
+        top_p: Option<f64>,
+        reasoning_effort: Option<&str>,
+        tool_overrides: Option<&JsonValue>,
+        model_config_override: Option<&JsonValue>,
     ) -> Result<LineStream, ApiError> {
         self.chat_via_wreq(
             token,
@@ -269,6 +268,11 @@ impl GrokChatService {
             think,
             file_attachments,
             image_attachments,
+            temperature,
+            top_p,
+            reasoning_effort,
+            tool_overrides,
+            model_config_override,
         )
         .await
     }
@@ -282,6 +286,11 @@ impl GrokChatService {
         think: Option<bool>,
         file_attachments: &[String],
         image_attachments: &[String],
+        temperature: Option<f64>,
+        top_p: Option<f64>,
+        reasoning_effort: Option<&str>,
+        tool_overrides: Option<&JsonValue>,
+        model_config_override: Option<&JsonValue>,
     ) -> Result<LineStream, ApiError> {
         let headers = ChatRequestBuilder::build_headers(token).await;
         let payload = ChatRequestBuilder::build_payload(
@@ -291,6 +300,11 @@ impl GrokChatService {
             think,
             file_attachments,
             image_attachments,
+            temperature,
+            top_p,
+            reasoning_effort,
+            tool_overrides,
+            model_config_override,
         )
         .await;
         let timeout: u64 = get_config("grok.timeout", 120u64).await;
@@ -365,6 +379,8 @@ impl GrokChatService {
             .think
             .or(Some(get_config("grok.thinking", false).await));
 
+        let re_str = request.reasoning_effort.as_deref();
+
         let response = self
             .chat(
                 token,
@@ -375,6 +391,11 @@ impl GrokChatService {
                 stream,
                 &file_ids,
                 &image_ids,
+                request.temperature,
+                request.top_p,
+                re_str,
+                None,
+                None,
             )
             .await?;
         Ok((response, stream, request.model.clone()))
@@ -389,18 +410,31 @@ impl ChatService {
         messages: Vec<JsonValue>,
         stream: Option<bool>,
         thinking: Option<String>,
+        temperature: Option<f64>,
+        top_p: Option<f64>,
+        reasoning_effort: Option<String>,
     ) -> Result<ChatResult, ApiError> {
         let token = TokenService::get_token_for_model(model).await?;
-        let think = match thinking.as_deref() {
-            Some("enabled") => Some(true),
-            Some("disabled") => Some(false),
-            _ => None,
+
+        // show_think 逻辑：reasoning_effort 优先，其次 thinking 字段
+        let think = if let Some(ref re) = reasoning_effort {
+            Some(re != "none")
+        } else {
+            match thinking.as_deref() {
+                Some("enabled") => Some(true),
+                Some("disabled") => Some(false),
+                _ => None,
+            }
         };
+
         let chat_req = ChatRequest {
             model: model.to_string(),
             messages,
             stream,
             think,
+            temperature,
+            top_p,
+            reasoning_effort,
         };
         let service = GrokChatService::new().await;
         let (resp, is_stream, model_name) = service.chat_openai(&token, &chat_req).await?;

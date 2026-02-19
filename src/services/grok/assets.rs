@@ -8,11 +8,9 @@ use serde_json::Value as JsonValue;
 use sha1::Digest;
 use tokio::sync::Mutex;
 use url::Url;
-use uuid::Uuid;
 
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
-use crate::services::grok::statsig::StatsigService;
 
 const UPLOAD_API: &str = "https://grok.com/rest/app-chat/upload-file";
 const LIST_API: &str = "https://grok.com/rest/assets";
@@ -140,81 +138,11 @@ impl BaseService {
     }
 
     pub async fn headers(&self, token: &str, referer: &str) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("Accept", "*/*".parse().unwrap());
-        headers.insert(
-            "Accept-Encoding",
-            "gzip, deflate, br, zstd".parse().unwrap(),
-        );
-        headers.insert("Accept-Language", "zh-CN,zh;q=0.9".parse().unwrap());
-        headers.insert("Baggage", "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c".parse().unwrap());
-        headers.insert("Cache-Control", "no-cache".parse().unwrap());
-        headers.insert("Content-Type", "application/json".parse().unwrap());
-        headers.insert("Origin", "https://grok.com".parse().unwrap());
-        headers.insert("Pragma", "no-cache".parse().unwrap());
-        headers.insert("Priority", "u=1, i".parse().unwrap());
-        headers.insert("Referer", referer.parse().unwrap());
-        headers.insert(
-            "Sec-Ch-Ua",
-            "\"Google Chrome\";v=\"136\", \"Chromium\";v=\"136\", \"Not(A:Brand\";v=\"24\""
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("Sec-Ch-Ua-Arch", "arm".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Bitness", "64".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Mobile", "?0".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Model", "".parse().unwrap());
-        headers.insert("Sec-Ch-Ua-Platform", "\"macOS\"".parse().unwrap());
-        headers.insert("Sec-Fetch-Dest", "empty".parse().unwrap());
-        headers.insert("Sec-Fetch-Mode", "cors".parse().unwrap());
-        headers.insert("Sec-Fetch-Site", "same-origin".parse().unwrap());
-        headers.insert(
-            "User-Agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-                .parse()
-                .unwrap(),
-        );
-        let statsig = StatsigService::gen_id().await;
-        headers.insert("x-statsig-id", statsig.parse().unwrap());
-        headers.insert(
-            "x-xai-request-id",
-            Uuid::new_v4().to_string().parse().unwrap(),
-        );
-        let raw = token.strip_prefix("sso=").unwrap_or(token);
-        let cf: String = get_config("grok.cf_clearance", String::new()).await;
-        let cookie = if cf.is_empty() {
-            format!("sso={raw}")
-        } else {
-            format!("sso={raw};cf_clearance={cf}")
-        };
-        headers.insert("Cookie", cookie.parse().unwrap());
-        headers
+        crate::services::grok::headers::build_grok_headers(token, None, Some(referer)).await
     }
 
-    pub async fn dl_headers(&self, token: &str, file_path: &str) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            "Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("Sec-Fetch-Dest", "document".parse().unwrap());
-        headers.insert("Sec-Fetch-Mode", "navigate".parse().unwrap());
-        headers.insert("Sec-Fetch-Site", "same-site".parse().unwrap());
-        headers.insert("Sec-Fetch-User", "?1".parse().unwrap());
-        headers.insert("Upgrade-Insecure-Requests", "1".parse().unwrap());
-        headers.insert("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36".parse().unwrap());
-        let raw = token.strip_prefix("sso=").unwrap_or(token);
-        let cf: String = get_config("grok.cf_clearance", String::new()).await;
-        let cookie = if cf.is_empty() {
-            format!("sso={raw}")
-        } else {
-            format!("sso={raw};cf_clearance={cf}")
-        };
-        headers.insert("Cookie", cookie.parse().unwrap());
-        headers.insert("Referer", "https://grok.com/".parse().unwrap());
-        headers
+    pub async fn dl_headers(&self, token: &str, _file_path: &str) -> reqwest::header::HeaderMap {
+        crate::services::grok::headers::build_download_headers(token).await
     }
 
     fn parse_b64(&self, input: &str) -> Result<(String, String, String), ApiError> {

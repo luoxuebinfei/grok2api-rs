@@ -1,9 +1,11 @@
 use std::convert::Infallible;
 
 use async_stream::stream;
+use base64::Engine as _;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::post};
+use axum::extract::Multipart;
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::future::join_all;
@@ -16,6 +18,7 @@ use crate::core::auth::verify_api_key;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 use crate::services::grok::chat::GrokChatService;
+use crate::services::grok::image_edit::ImageEditService;
 use crate::services::grok::imagine_nsfw;
 use crate::services::grok::model::{Cost, ModelInfo, ModelService};
 use crate::services::grok::processor::{ImageCollectProcessor, ImageStreamProcessor};
@@ -57,6 +60,7 @@ pub fn router() -> Router {
     Router::new()
         .route("/v1/images/generations", post(create_image))
         .route("/v1/images/generations/nsfw", post(create_image_nsfw))
+        .route("/v1/images/edits", post(edit_image))
 }
 
 async fn create_image(
@@ -305,6 +309,11 @@ async fn call_grok_image(
             true,
             &[],
             &[],
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .await
 }
@@ -333,4 +342,150 @@ async fn resolve_image_output_format(
 
     let config_format: String = get_config("app.image_format", "url".to_string()).await;
     Ok(ImageOutputFormat::parse(&config_format).unwrap_or(ImageOutputFormat::Url))
+}
+
+/// POST /v1/images/edits — 图片编辑端点（Multipart form-data）
+async fn edit_image(
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Response, ApiError> {
+    verify_api_key(&headers).await?;
+    let enabled: bool = get_config("downstream.enable_images", true).await;
+    if !enabled {
+        return Err(ApiError::not_found("Endpoint disabled"));
+    }
+
+    let mut prompt = String::new();
+    let mut model_id = "grok-imagine-1.0-edit".to_string();
+    let mut n: u32 = 1;
+    let mut response_format = "b64_json".to_string();
+    let mut stream = false;
+    let mut image_data_list: Vec<String> = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "prompt" => {
+                prompt = field.text().await.unwrap_or_default();
+            }
+            "model" => {
+                model_id = field.text().await.unwrap_or(model_id);
+            }
+            "n" => {
+                if let Ok(text) = field.text().await {
+                    n = text.parse().unwrap_or(1);
+                }
+            }
+            "response_format" => {
+                response_format = field.text().await.unwrap_or(response_format);
+            }
+            "stream" => {
+                if let Ok(text) = field.text().await {
+                    stream = text == "true" || text == "1";
+                }
+            }
+            "image" | "file" => {
+                // 读取图片文件为 base64 data URI
+                let content_type = field
+                    .content_type()
+                    .unwrap_or("image/png")
+                    .to_string();
+                if let Ok(bytes) = field.bytes().await {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let data_uri = format!("data:{content_type};base64,{b64}");
+                    image_data_list.push(data_uri);
+                }
+            }
+            _ => {
+                // 忽略未知字段
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    if prompt.trim().is_empty() {
+        return Err(ApiError::invalid_request("Prompt cannot be empty").with_param("prompt"));
+    }
+    if image_data_list.is_empty() {
+        return Err(
+            ApiError::invalid_request("At least one image is required").with_param("image"),
+        );
+    }
+
+    let n = n.clamp(1, 10);
+    let model_info = ModelService::get(&model_id).ok_or_else(|| {
+        ApiError::invalid_request("The model does not exist").with_code("model_not_found")
+    })?;
+
+    if !model_info.is_image_edit {
+        return Err(ApiError::invalid_request(format!(
+            "The model `{}` is not supported for image editing.",
+            model_id
+        ))
+        .with_code("model_not_supported"));
+    }
+
+    let token = TokenService::get_token_for_model(&model_id).await?;
+    let output_format = ImageOutputFormat::parse(&response_format).unwrap_or(ImageOutputFormat::Base64);
+    let return_base64 = output_format.is_base64();
+
+    let effort = if model_info.cost == Cost::High {
+        EffortType::High
+    } else {
+        EffortType::Low
+    };
+
+    if stream {
+        let response = ImageEditService::edit_stream(
+            &token,
+            &model_info,
+            &prompt,
+            &image_data_list,
+            n as usize,
+            return_base64,
+        )
+        .await?;
+
+        let processor =
+            ImageStreamProcessor::new(&model_id, &token, n as usize, return_base64).await;
+        let token_clone = token.clone();
+        let body_stream = stream! {
+            let mut inner = Box::pin(processor.process(response));
+            while let Some(item) = inner.as_mut().next().await {
+                yield item;
+            }
+            let _ = TokenService::consume(&token_clone, effort).await;
+        };
+        let mut resp_headers = HeaderMap::new();
+        resp_headers.insert("Cache-Control", "no-cache".parse().unwrap());
+        resp_headers.insert("Connection", "keep-alive".parse().unwrap());
+        resp_headers.insert("Content-Type", "text/event-stream".parse().unwrap());
+        return Ok(
+            (resp_headers, axum::body::Body::from_stream(body_stream)).into_response(),
+        );
+    }
+
+    // 非流式
+    let images = ImageEditService::edit_collect(
+        &token,
+        &model_info,
+        &prompt,
+        &image_data_list,
+        n as usize,
+        return_base64,
+    )
+    .await?;
+
+    let _ = TokenService::consume(&token, effort).await;
+
+    let data: Vec<JsonValue> = images
+        .into_iter()
+        .take(n as usize)
+        .collect();
+
+    let created = chrono::Utc::now().timestamp();
+    let usage = json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0});
+    let resp = json!({"created": created, "data": data, "usage": usage});
+
+    Ok((StatusCode::OK, Json(resp)).into_response())
 }

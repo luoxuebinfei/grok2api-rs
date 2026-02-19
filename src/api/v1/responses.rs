@@ -35,6 +35,9 @@ pub struct ResponsesRequest {
     pub stream: Option<bool>,
     pub thinking: Option<String>,
     pub video_config: Option<VideoConfig>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub reasoning_effort: Option<String>,
 }
 
 pub fn router() -> Router {
@@ -207,9 +210,10 @@ async fn responses(
                 model,
                 think,
                 is_stream,
+                upscale_on_finish,
             } => {
                 if is_stream {
-                    let processor = VideoStreamProcessor::new(&model, &token, think).await;
+                    let processor = VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
                     } else {
@@ -306,7 +310,7 @@ async fn responses(
                     headers.insert("Content-Type", "text/event-stream".parse().unwrap());
                     Ok((headers, axum::body::Body::from_stream(body_stream)).into_response())
                 } else {
-                    let processor = VideoCollectProcessor::new(&model, &token).await;
+                    let processor = VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
                     let result = processor.process(line_stream).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
@@ -332,9 +336,16 @@ async fn responses(
             VideoResult::Json(json) => Ok((StatusCode::OK, Json(json)).into_response()),
         }
     } else {
-        let result =
-            ChatService::completions(&req.model, messages, Some(stream), req.thinking.clone())
-                .await?;
+        let result = ChatService::completions(
+            &req.model,
+            messages,
+            Some(stream),
+            req.thinking.clone(),
+            req.temperature,
+            req.top_p,
+            req.reasoning_effort.clone(),
+        )
+        .await?;
         match result {
             ChatResult::Stream {
                 stream: line_stream,

@@ -7,12 +7,20 @@ pub struct TokenService;
 
 impl TokenService {
     pub async fn get_token_for_model(model: &str) -> Result<String, ApiError> {
-        let pool = ModelService::pool_for_model(model);
+        let candidates = ModelService::pool_candidates_for_model(model);
         let mgr = get_token_manager().await;
         let mut mgr = mgr.lock().await;
         mgr.reload_if_stale().await;
-        let token = mgr.get_token(&pool);
-        token.ok_or_else(|| ApiError::rate_limit("No available tokens. Please try again later."))
+
+        for pool in &candidates {
+            if let Some(token) = mgr.get_token(pool) {
+                return Ok(token);
+            }
+        }
+
+        Err(ApiError::rate_limit(
+            "No available tokens. Please try again later.",
+        ))
     }
 
     pub async fn consume(token: &str, effort: EffortType) -> bool {

@@ -25,6 +25,7 @@ pub struct ModelInfo {
     pub description: String,
     pub is_video: bool,
     pub is_image: bool,
+    pub is_image_edit: bool,
 }
 
 impl ModelInfo {
@@ -39,6 +40,7 @@ impl ModelInfo {
             description: String::new(),
             is_video: false,
             is_image: false,
+            is_image_edit: false,
         }
     }
 }
@@ -47,17 +49,37 @@ pub struct ModelService;
 
 impl ModelService {
     pub fn list() -> Vec<ModelInfo> {
-        let mut models = vec![
-            ModelInfo::new("grok-3", "grok-3", "MODEL_MODE_AUTO", "Grok 3"),
+        vec![
+            // grok-3 系列
+            ModelInfo::new("grok-3", "grok-3", "MODEL_MODE_GROK_3", "Grok 3"),
             ModelInfo::new("grok-3-fast", "grok-3", "MODEL_MODE_FAST", "Grok 3 Fast"),
-            ModelInfo::new("grok-4", "grok-4", "MODEL_MODE_AUTO", "Grok 4"),
+            ModelInfo::new(
+                "grok-3-mini",
+                "grok-3",
+                "MODEL_MODE_GROK_3_MINI_THINKING",
+                "Grok 3 Mini",
+            ),
+            ModelInfo::new(
+                "grok-3-thinking",
+                "grok-3",
+                "MODEL_MODE_GROK_3_THINKING",
+                "Grok 3 Thinking",
+            ),
+            // grok-4 系列
+            ModelInfo::new("grok-4", "grok-4", "MODEL_MODE_GROK_4", "Grok 4"),
             ModelInfo::new(
                 "grok-4-mini",
-                "grok-4-mini-thinking-tahoe",
+                "grok-4-mini",
                 "MODEL_MODE_GROK_4_MINI_THINKING",
                 "Grok 4 Mini",
             ),
             ModelInfo::new("grok-4-fast", "grok-4", "MODEL_MODE_FAST", "Grok 4 Fast"),
+            ModelInfo::new(
+                "grok-4-thinking",
+                "grok-4",
+                "MODEL_MODE_GROK_4_THINKING",
+                "Grok 4 Thinking",
+            ),
             {
                 let mut m =
                     ModelInfo::new("grok-4-heavy", "grok-4", "MODEL_MODE_HEAVY", "Grok 4 Heavy");
@@ -65,6 +87,7 @@ impl ModelService {
                 m.cost = Cost::High;
                 m
             },
+            // grok-4.1 系列
             ModelInfo::new(
                 "grok-4.1",
                 "grok-4-1-thinking-1129",
@@ -81,6 +104,36 @@ impl ModelService {
                 m.cost = Cost::High;
                 m
             },
+            ModelInfo::new(
+                "grok-4.1-mini",
+                "grok-4-1-thinking-1129",
+                "MODEL_MODE_GROK_4_1_MINI_THINKING",
+                "Grok 4.1 Mini",
+            ),
+            ModelInfo::new(
+                "grok-4.1-fast",
+                "grok-4-1-thinking-1129",
+                "MODEL_MODE_FAST",
+                "Grok 4.1 Fast",
+            ),
+            {
+                let mut m = ModelInfo::new(
+                    "grok-4.1-expert",
+                    "grok-4-1-thinking-1129",
+                    "MODEL_MODE_EXPERT",
+                    "Grok 4.1 Expert",
+                );
+                m.cost = Cost::High;
+                m
+            },
+            // grok-4.20
+            ModelInfo::new(
+                "grok-4.20-beta",
+                "grok-420",
+                "MODEL_MODE_GROK_420",
+                "Grok 4.20 Beta",
+            ),
+            // 图片生成
             {
                 let mut m = ModelInfo::new(
                     "grok-imagine-1.0",
@@ -93,6 +146,20 @@ impl ModelService {
                 m.description = "Image generation model".to_string();
                 m
             },
+            // 图片编辑
+            {
+                let mut m = ModelInfo::new(
+                    "grok-imagine-1.0-edit",
+                    "imagine-image-edit",
+                    "MODEL_MODE_FAST",
+                    "Grok Image Edit",
+                );
+                m.cost = Cost::High;
+                m.is_image_edit = true;
+                m.description = "Image editing model".to_string();
+                m
+            },
+            // 视频生成
             {
                 let mut m = ModelInfo::new(
                     "grok-imagine-1.0-video",
@@ -105,8 +172,7 @@ impl ModelService {
                 m.description = "Video generation model".to_string();
                 m
             },
-        ];
-        models
+        ]
     }
 
     pub fn get(model_id: &str) -> Option<ModelInfo> {
@@ -117,12 +183,14 @@ impl ModelService {
         Self::get(model_id).is_some()
     }
 
-    pub fn pool_for_model(model_id: &str) -> String {
+    /// 返回模型对应的候选 token 池列表（按优先级排序）
+    pub fn pool_candidates_for_model(model_id: &str) -> Vec<&'static str> {
         if let Some(m) = Self::get(model_id) {
             if m.tier == Tier::Super {
-                return "ssoSuper".to_string();
+                return vec!["ssoSuper"];
             }
         }
-        "ssoBasic".to_string()
+        // Basic tier：优先 ssoBasic，回退 ssoSuper
+        vec!["ssoBasic", "ssoSuper"]
     }
 }
