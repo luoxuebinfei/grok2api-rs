@@ -457,6 +457,7 @@ async function saveEdit() {
       note: newNote,
       status: 'active', // default
       use_count: 0,
+      tags: [],
       _selected: false
     });
   }
@@ -490,7 +491,8 @@ async function syncToServer() {
       quota: t.quota,
       note: t.note,
       fail_count: t.fail_count,
-      use_count: t.use_count || 0
+      use_count: t.use_count || 0,
+      tags: t.tags || []
     });
   });
 
@@ -536,6 +538,7 @@ async function submitImport() {
         quota: 80,
         note: '',
         use_count: 0,
+        tags: [],
         _selected: false
       });
     }
