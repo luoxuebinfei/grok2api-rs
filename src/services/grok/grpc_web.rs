@@ -16,8 +16,8 @@ fn maybe_decode_grpc_web_text(body: &[u8], content_type: Option<&str>) -> Vec<u8
     if ct.contains("grpc-web-text") {
         let compact: Vec<u8> = body
             .iter()
-            .cloned()
             .filter(|b| !b"\r\n \t".contains(b))
+            .copied()
             .collect();
         return base64::engine::general_purpose::STANDARD
             .decode(compact)
@@ -26,7 +26,7 @@ fn maybe_decode_grpc_web_text(body: &[u8], content_type: Option<&str>) -> Vec<u8
 
     let head = &body[..body.len().min(2048)];
     if head.iter().all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' | b'=' | b'\r' | b'\n')) {
-        let compact: Vec<u8> = body.iter().cloned().filter(|b| !b"\r\n \t".contains(b)).collect();
+        let compact: Vec<u8> = body.iter().filter(|b| !b"\r\n \t".contains(b)).copied().collect();
         if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(compact) {
             return decoded;
         }

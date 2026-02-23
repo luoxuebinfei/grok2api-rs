@@ -139,6 +139,18 @@ pub async fn build_cookie(token: &str) -> String {
 // 公共入口
 // ---------------------------------------------------------------------------
 
+/// 获取有效的 User-Agent：优先使用用户配置，为空则根据 emulation 自动生成
+async fn resolve_user_agent() -> (String, String) {
+    let emulation: String = get_config("grok.wreq_emulation", "chrome_136".to_string()).await;
+    let custom_ua: String = get_config("grok.user_agent", String::new()).await;
+    let ua = if custom_ua.trim().is_empty() {
+        build_user_agent(&emulation)
+    } else {
+        custom_ua
+    };
+    (ua, emulation)
+}
+
 /// 构建与 wreq_emulation 匹配的完整 Grok 请求 headers
 ///
 /// - `token`: SSO token（带或不带 "sso=" 前缀均可）
@@ -149,15 +161,7 @@ pub async fn build_grok_headers(
     content_type: Option<&str>,
     referer: Option<&str>,
 ) -> HeaderMap {
-    let emulation: String = get_config("grok.wreq_emulation", "chrome_136".to_string()).await;
-
-    // User-Agent：优先使用用户配置，为空则自动生成
-    let custom_ua: String = get_config("grok.user_agent", String::new()).await;
-    let user_agent = if custom_ua.trim().is_empty() {
-        build_user_agent(&emulation)
-    } else {
-        custom_ua
-    };
+    let (user_agent, emulation) = resolve_user_agent().await;
 
     let mut headers = HeaderMap::new();
 
@@ -220,13 +224,7 @@ pub async fn build_grok_headers(
 ///
 /// 仅包含必要的 User-Agent、Cookie、Sec-Fetch 等头，不含 Client Hints
 pub async fn build_download_headers(token: &str) -> HeaderMap {
-    let emulation: String = get_config("grok.wreq_emulation", "chrome_136".to_string()).await;
-    let custom_ua: String = get_config("grok.user_agent", String::new()).await;
-    let user_agent = if custom_ua.trim().is_empty() {
-        build_user_agent(&emulation)
-    } else {
-        custom_ua
-    };
+    let (user_agent, _) = resolve_user_agent().await;
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -251,11 +249,5 @@ pub async fn build_download_headers(token: &str) -> HeaderMap {
 
 /// 获取与 wreq_emulation 匹配的 User-Agent（供 nsfw/imagine_nsfw 等场景复用）
 pub async fn get_matched_user_agent() -> String {
-    let emulation: String = get_config("grok.wreq_emulation", "chrome_136".to_string()).await;
-    let custom_ua: String = get_config("grok.user_agent", String::new()).await;
-    if custom_ua.trim().is_empty() {
-        build_user_agent(&emulation)
-    } else {
-        custom_ua
-    }
+    resolve_user_agent().await.0
 }

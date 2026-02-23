@@ -14,7 +14,7 @@ pub struct ImageEditService;
 impl ImageEditService {
     /// 上传图片并返回 asset URL 列表
     async fn upload_images(images: &[String], token: &str) -> Result<Vec<String>, ApiError> {
-        let uploader = UploadService::new().await;
+        let uploader = UploadService::shared().await;
         let mut image_urls = Vec::new();
         for image_data in images {
             let (_file_id, file_uri) = uploader.upload(image_data, token).await?;
@@ -96,9 +96,7 @@ impl ImageEditService {
 
         let tool_overrides = serde_json::json!({"imageGen": true});
 
-        let chat_service = GrokChatService::new().await;
-        chat_service
-            .chat(
+        GrokChatService::chat(
                 token,
                 prompt,
                 &model_info.grok_model,

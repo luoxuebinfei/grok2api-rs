@@ -336,7 +336,7 @@ async fn get_sso_tokens() -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for pool in guard.pools.values() {
-        for info in pool.list() {
+        for info in pool.iter() {
             let raw = sanitize_token(&info.token);
             if raw.is_empty() {
                 continue;
@@ -460,8 +460,8 @@ async fn verify_age(token: &str) -> bool {
     }
 }
 
-async fn save_final_images(progress: GenerationProgress, n: usize) -> (Vec<String>, Vec<String>) {
-    let mut imgs = progress.images.values().cloned().collect::<Vec<_>>();
+async fn save_final_images(progress: &GenerationProgress, n: usize) -> (Vec<String>, Vec<String>) {
+    let mut imgs = progress.images.values().collect::<Vec<_>>();
     imgs.sort_by(|a, b| {
         b.is_final
             .cmp(&a.is_final)
@@ -508,8 +508,8 @@ async fn save_final_images(progress: GenerationProgress, n: usize) -> (Vec<Strin
         };
 
         result_urls.push(url);
-        result_b64.push(img.blob);
-        saved_ids.insert(img.image_id);
+        result_b64.push(img.blob.clone());
+        saved_ids.insert(img.image_id.clone());
     }
 
     (result_urls, result_b64)
@@ -722,7 +722,7 @@ async fn do_generate(
         }
     }
 
-    let (urls, b64_list) = save_final_images(progress.clone(), n).await;
+    let (urls, b64_list) = save_final_images(&progress, n).await;
     if !urls.is_empty() {
         ImagineResult::ok(urls, b64_list)
     } else if let Some((code, msg)) = error_info {

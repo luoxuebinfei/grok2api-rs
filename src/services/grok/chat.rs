@@ -234,12 +234,7 @@ impl ChatRequestBuilder {
 pub struct GrokChatService;
 
 impl GrokChatService {
-    pub async fn new() -> Self {
-        Self
-    }
-
     pub async fn chat(
-        &self,
         token: &str,
         message: &str,
         model: &str,
@@ -254,7 +249,7 @@ impl GrokChatService {
         tool_overrides: Option<&JsonValue>,
         model_config_override: Option<&JsonValue>,
     ) -> Result<LineStream, ApiError> {
-        self.chat_via_wreq(
+        Self::chat_via_wreq(
             token,
             message,
             model,
@@ -272,7 +267,6 @@ impl GrokChatService {
     }
 
     async fn chat_via_wreq(
-        &self,
         token: &str,
         message: &str,
         model: &str,
@@ -338,7 +332,6 @@ impl GrokChatService {
     }
 
     pub async fn chat_openai(
-        &self,
         token: &str,
         request: &ChatRequest,
     ) -> Result<(LineStream, bool, String), ApiError> {
@@ -349,7 +342,7 @@ impl GrokChatService {
 
         let mut file_ids = Vec::new();
         if !attachments.is_empty() {
-            let uploader = UploadService::new().await;
+            let uploader = UploadService::shared().await;
             for (_kind, data) in attachments {
                 let (file_id, _) = uploader.upload(&data, token).await?;
                 file_ids.push(file_id);
@@ -366,8 +359,7 @@ impl GrokChatService {
 
         let re_str = request.reasoning_effort.as_deref();
 
-        let response = self
-            .chat(
+        let response = Self::chat(
                 token,
                 &message,
                 &model_info.grok_model,
@@ -421,8 +413,7 @@ impl ChatService {
             top_p,
             reasoning_effort,
         };
-        let service = GrokChatService::new().await;
-        let (resp, is_stream, model_name) = service.chat_openai(&token, &chat_req).await?;
+        let (resp, is_stream, model_name) = GrokChatService::chat_openai(&token, &chat_req).await?;
         Ok(ChatResult::Stream {
             stream: resp,
             token,

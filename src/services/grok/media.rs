@@ -264,7 +264,7 @@ impl VideoService {
 
         let mut image_url: Option<String> = None;
         if !attachments.is_empty() {
-            let uploader = UploadService::new().await;
+            let uploader = UploadService::shared().await;
             for (kind, data) in attachments {
                 if kind == "image" {
                     let (_file_id, file_uri) = uploader.upload(&data, &token).await?;

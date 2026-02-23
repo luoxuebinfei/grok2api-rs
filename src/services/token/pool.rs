@@ -28,6 +28,11 @@ impl TokenPool {
         before != self.tokens.len()
     }
 
+    /// 获取引用（不 clone），用于只读场景
+    pub fn get_ref(&self, token: &str) -> Option<&TokenInfo> {
+        self.tokens.iter().find(|t| t.token == token)
+    }
+
     pub fn get(&self, token: &str) -> Option<TokenInfo> {
         self.tokens.iter().find(|t| t.token == token).cloned()
     }
@@ -38,6 +43,11 @@ impl TokenPool {
 
     pub fn list(&self) -> Vec<TokenInfo> {
         self.tokens.clone()
+    }
+
+    /// 返回引用切片，避免不必要的 clone（内部热路径使用）
+    pub fn iter(&self) -> &[TokenInfo] {
+        &self.tokens
     }
 
     pub fn select(&self) -> Option<TokenInfo> {
@@ -52,7 +62,7 @@ impl TokenPool {
         let max_quota = available.iter().map(|t| t.quota).max().unwrap_or(0);
         available.retain(|t| t.quota == max_quota);
         let mut rng = rand::thread_rng();
-        available.choose(&mut rng).cloned().cloned()
+        available.choose(&mut rng).copied().cloned()
     }
 
     pub fn count(&self) -> usize {

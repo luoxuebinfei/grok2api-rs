@@ -12,16 +12,12 @@ const LIMITS_API: &str = "https://grok.com/rest/rate-limits";
 pub struct UsageService;
 
 impl UsageService {
-    pub async fn new() -> Self {
-        Self
-    }
-
-    async fn build_headers(&self, token: &str) -> reqwest::header::HeaderMap {
+    async fn build_headers(token: &str) -> reqwest::header::HeaderMap {
         build_grok_headers(token, None, None).await
     }
 
-    async fn get_via_wreq(&self, token: &str, model_name: &str) -> Result<JsonValue, ApiError> {
-        let headers = self.build_headers(token).await;
+    async fn get_via_wreq(token: &str, model_name: &str) -> Result<JsonValue, ApiError> {
+        let headers = Self::build_headers(token).await;
         let payload = serde_json::json!({
             "requestKind": "DEFAULT",
             "modelName": model_name,
@@ -84,25 +80,22 @@ impl UsageService {
         })
     }
 
-    pub async fn get(&self, token: &str, model_name: &str) -> Result<JsonValue, ApiError> {
-        self.get_via_wreq(token, model_name).await
+    pub async fn get(token: &str, model_name: &str) -> Result<JsonValue, ApiError> {
+        Self::get_via_wreq(token, model_name).await
     }
 }
 
 fn normalize_json_text(raw: &str) -> String {
-    let mut text = raw.trim_start_matches('\u{feff}').trim_start().to_string();
+    let mut text = raw.trim_start_matches('\u{feff}').trim_start();
 
     if text.starts_with(")]}'") {
         if let Some((_, rest)) = text.split_once('\n') {
-            text = rest.trim_start().to_string();
+            text = rest.trim_start();
         }
     }
 
-    if text.starts_with("for (;;);") {
-        text = text
-            .trim_start_matches("for (;;);")
-            .trim_start()
-            .to_string();
+    if let Some(stripped) = text.strip_prefix("for (;;);") {
+        text = stripped.trim_start();
     }
 
     text.trim().to_string()

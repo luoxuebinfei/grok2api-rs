@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use async_stream::stream;
@@ -9,6 +11,47 @@ use wreq_util::Emulation;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 
+/// wreq Client 全局池：按 (proxy, emulation) 缓存，避免每请求重建 TLS 连接池
+static WREQ_POOL: once_cell::sync::Lazy<RwLock<HashMap<(String, String), Client>>> =
+    once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// reqwest Client 全局池：按 proxy 缓存
+static REQWEST_POOL: once_cell::sync::Lazy<RwLock<HashMap<String, reqwest::Client>>> =
+    once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// 获取或创建池化的 reqwest::Client
+pub fn get_reqwest_client(proxy: Option<&str>) -> reqwest::Client {
+    let proxy_key = proxy
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .unwrap_or("")
+        .to_string();
+
+    // 快速路径：读锁查找
+    if let Ok(pool) = REQWEST_POOL.read() {
+        if let Some(client) = pool.get(&proxy_key) {
+            return client.clone();
+        }
+    }
+
+    // 慢路径：写锁创建
+    let mut pool = REQWEST_POOL.write().unwrap();
+    // 双重检查
+    if let Some(client) = pool.get(&proxy_key) {
+        return client.clone();
+    }
+
+    let mut builder = reqwest::Client::builder();
+    if !proxy_key.is_empty() {
+        if let Ok(proxy) = reqwest::Proxy::all(&proxy_key) {
+            builder = builder.proxy(proxy);
+        }
+    }
+    let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
+    pool.insert(proxy_key, client.clone());
+    client
+}
+
 pub async fn build_client(proxy: Option<&str>, timeout_secs: u64) -> Result<Client, ApiError> {
     build_client_with_emulation(proxy, timeout_secs, None).await
 }
@@ -18,29 +61,52 @@ pub async fn build_client_with_emulation(
     timeout_secs: u64,
     emulation_override: Option<&str>,
 ) -> Result<Client, ApiError> {
-    let emulation = if let Some(raw) = emulation_override {
-        parse_emulation(raw)
+    let emulation_str = if let Some(raw) = emulation_override {
+        raw.to_string()
     } else {
-        let emulation_raw: String = get_config("grok.wreq_emulation", String::new()).await;
-        parse_emulation(emulation_raw.trim())
+        get_config("grok.wreq_emulation", String::new()).await
     };
+    let emulation_str_trimmed = emulation_str.trim().to_string();
+    let emulation = parse_emulation(&emulation_str_trimmed);
+
+    let proxy_key = proxy
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let cache_key = (proxy_key.clone(), emulation_str_trimmed);
+
+    // 快速路径：读锁查找
+    if let Ok(pool) = WREQ_POOL.read() {
+        if let Some(client) = pool.get(&cache_key) {
+            return Ok(client.clone());
+        }
+    }
+
+    // 慢路径：写锁创建
+    let mut pool = WREQ_POOL.write().map_err(|e| {
+        ApiError::server(format!("wreq pool lock poisoned: {e}"))
+    })?;
+    // 双重检查
+    if let Some(client) = pool.get(&cache_key) {
+        return Ok(client.clone());
+    }
 
     let mut builder = Client::builder()
         .emulation(emulation)
         .connect_timeout(Duration::from_secs(timeout_secs.clamp(5, 30)));
 
-    if let Some(proxy_url) = proxy {
-        let trimmed = proxy_url.trim();
-        if !trimmed.is_empty() {
-            let proxy = Proxy::all(trimmed)
-                .map_err(|e| ApiError::upstream(format!("Invalid proxy URL: {e}")))?;
-            builder = builder.proxy(proxy);
-        }
+    if !proxy_key.is_empty() {
+        let proxy = Proxy::all(&proxy_key)
+            .map_err(|e| ApiError::upstream(format!("Invalid proxy URL: {e}")))?;
+        builder = builder.proxy(proxy);
     }
 
-    builder
+    let client = builder
         .build()
-        .map_err(|e| ApiError::upstream(format!("Build wreq client failed: {e}")))
+        .map_err(|e| ApiError::upstream(format!("Build wreq client failed: {e}")))?;
+    pool.insert(cache_key, client.clone());
+    Ok(client)
 }
 
 fn parse_emulation(raw: &str) -> Emulation {

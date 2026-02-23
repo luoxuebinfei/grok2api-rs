@@ -84,8 +84,8 @@ impl TokenManager {
         let mut map = serde_json::Map::new();
         for (name, pool) in &self.pools {
             let tokens: Vec<JsonValue> = pool
-                .list()
-                .into_iter()
+                .iter()
+                .iter()
                 .map(|t| serde_json::to_value(t).unwrap_or(JsonValue::Null))
                 .collect();
             map.insert(name.clone(), JsonValue::Array(tokens));
@@ -127,7 +127,7 @@ impl TokenManager {
         let raw = token_str.trim_start_matches("sso=");
         let mut pool_name: Option<String> = None;
         for (name, pool) in &self.pools {
-            if pool.get(raw).is_some() {
+            if pool.get_ref(raw).is_some() {
                 pool_name = Some(name.clone());
                 break;
             }
@@ -136,8 +136,7 @@ impl TokenManager {
             Some(p) => p,
             None => return false,
         };
-        let usage_service = UsageService::new().await;
-        match usage_service.get(token_str, model_name).await {
+        match UsageService::get(token_str, model_name).await {
             Ok(result) => {
                 if let Some(remain) = result.get("remainingTokens").and_then(|v| v.as_i64()) {
                     if let Some(token) = self.pools.get_mut(&pool_name).and_then(|p| p.get_mut(raw))
@@ -213,8 +212,9 @@ impl TokenManager {
     #[allow(dead_code)]
     pub async fn reset_all(&mut self) {
         for pool in self.pools.values_mut() {
-            for token in pool.list() {
-                if let Some(tok) = pool.get_mut(&token.token) {
+            let tokens: Vec<String> = pool.iter().iter().map(|t| t.token.clone()).collect();
+            for token_str in tokens {
+                if let Some(tok) = pool.get_mut(&token_str) {
                     tok.reset();
                 }
             }
@@ -256,7 +256,7 @@ impl TokenManager {
     pub fn has_tag(&self, token: &str, tag: &str) -> bool {
         let raw = token.trim_start_matches("sso=");
         for pool in self.pools.values() {
-            if let Some(tok) = pool.get(raw) {
+            if let Some(tok) = pool.get_ref(raw) {
                 return tok.tags.iter().any(|t| t == tag);
             }
         }
@@ -293,7 +293,7 @@ impl TokenManager {
         let interval_hours: i64 = get_config("token.refresh_interval_hours", 8i64).await;
         let mut to_refresh = Vec::new();
         for pool in self.pools.values() {
-            for token in pool.list() {
+            for token in pool.iter() {
                 if token.need_refresh(interval_hours) {
                     to_refresh.push(token.token.clone());
                 }
@@ -307,17 +307,16 @@ impl TokenManager {
                 ("expired", 0),
             ]);
         }
-        let usage = UsageService::new().await;
         let mut refreshed = 0;
         let mut recovered = 0;
         let mut expired = 0;
         for token_str in to_refresh {
-            if let Ok(result) = usage.get(&token_str, "grok-3").await {
+            if let Ok(result) = UsageService::get(&token_str, "grok-3").await {
                 if let Some(remain) = result.get("remainingTokens").and_then(|v| v.as_i64()) {
                     if let Some(pool) = self
                         .pools
                         .values_mut()
-                        .find(|p| p.get(&token_str).is_some())
+                        .find(|p| p.get_ref(&token_str).is_some())
                     {
                         if let Some(tok) = pool.get_mut(&token_str) {
                             let old_quota = tok.quota;
@@ -333,7 +332,7 @@ impl TokenManager {
                 if let Some(pool) = self
                     .pools
                     .values_mut()
-                    .find(|p| p.get(&token_str).is_some())
+                    .find(|p| p.get_ref(&token_str).is_some())
                 {
                     if let Some(tok) = pool.get_mut(&token_str) {
                         tok.status = TokenStatus::Expired;

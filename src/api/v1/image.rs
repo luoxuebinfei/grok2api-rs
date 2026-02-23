@@ -299,9 +299,7 @@ pub(crate) async fn call_grok_image(
     prompt: &str,
     model_info: &ModelInfo,
 ) -> Result<impl futures::Stream<Item = String> + Send + 'static, ApiError> {
-    let chat_service = GrokChatService::new().await;
-    chat_service
-        .chat(
+    GrokChatService::chat(
             token,
             &format!("Image Generation:{prompt}"),
             &model_info.grok_model,

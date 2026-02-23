@@ -114,13 +114,8 @@ type ArcMutex = std::sync::Arc<Mutex<()>>;
 impl BaseService {
     pub async fn new(proxy: Option<String>) -> Self {
         let proxy = proxy.unwrap_or_default();
-        let mut builder = Client::builder();
-        if !proxy.is_empty() {
-            if let Ok(proxy) = reqwest::Proxy::all(&proxy) {
-                builder = builder.proxy(proxy);
-            }
-        }
-        let client = builder.build().unwrap();
+        let client =
+            crate::services::grok::wreq_client::get_reqwest_client(Some(&proxy));
         let timeout = get_config("grok.timeout", 120u64).await;
         Self {
             proxy,
@@ -397,7 +392,7 @@ impl DeleteService {
     }
 
     pub async fn delete_all(&self, token: &str) -> Result<JsonValue, ApiError> {
-        let list = ListService::new().await;
+        let list = ListService::shared().await;
         let assets = list.list(token).await.unwrap_or_default();
         if assets.is_empty() {
             return Ok(serde_json::json!({"total":0,"success":0,"failed":0,"skipped":true}));
@@ -751,5 +746,54 @@ impl DownloadService {
             format!("/{file_path}")
         };
         format!("{}/v1/files{}", app_url.trim_end_matches('/'), path)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 全局单例获取函数（避免每次请求重建 Service + Client）
+// ---------------------------------------------------------------------------
+
+static UPLOAD_SERVICE: tokio::sync::OnceCell<UploadService> = tokio::sync::OnceCell::const_new();
+
+impl UploadService {
+    /// 获取全局单例（推荐使用此方法代替 new()）
+    pub async fn shared() -> &'static Self {
+        UPLOAD_SERVICE
+            .get_or_init(|| async { UploadService::new().await })
+            .await
+    }
+}
+
+static DOWNLOAD_SERVICE: tokio::sync::OnceCell<DownloadService> =
+    tokio::sync::OnceCell::const_new();
+
+impl DownloadService {
+    /// 获取全局单例（推荐使用此方法代替 new()）
+    pub async fn shared() -> &'static Self {
+        DOWNLOAD_SERVICE
+            .get_or_init(|| async { DownloadService::new().await })
+            .await
+    }
+}
+
+static LIST_SERVICE: tokio::sync::OnceCell<ListService> = tokio::sync::OnceCell::const_new();
+
+impl ListService {
+    /// 获取全局单例（推荐使用此方法代替 new()）
+    pub async fn shared() -> &'static Self {
+        LIST_SERVICE
+            .get_or_init(|| async { ListService::new().await })
+            .await
+    }
+}
+
+static DELETE_SERVICE: tokio::sync::OnceCell<DeleteService> = tokio::sync::OnceCell::const_new();
+
+impl DeleteService {
+    /// 获取全局单例（推荐使用此方法代替 new()）
+    pub async fn shared() -> &'static Self {
+        DELETE_SERVICE
+            .get_or_init(|| async { DeleteService::new().await })
+            .await
     }
 }

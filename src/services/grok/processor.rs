@@ -27,25 +27,32 @@ fn extract_tool_text(raw: &str, rollout_id: &str) -> String {
     // 提取 <xai:tool_args>...</xai:tool_args>（含 CDATA）
     let tool_args = extract_xml_content(raw, "xai:tool_args").unwrap_or_default();
 
+    // 预解析一次 JSON，后续直接用 .get() 读取字段，避免重复解析
+    let args_val: Option<JsonValue> = serde_json::from_str(&tool_args).ok();
+
+    // 从预解析结果中提取字段
+    let get_field = |field: &str| -> Option<String> {
+        args_val.as_ref()?.get(field)?.as_str().map(|s| s.to_string())
+    };
+
     match tool_name.as_str() {
         "web_search" => {
-            let query = extract_json_field(&tool_args, "query")
-                .or_else(|| extract_json_field(&tool_args, "q"))
-                .unwrap_or(tool_args.clone());
+            let query = get_field("query")
+                .or_else(|| get_field("q"))
+                .unwrap_or_else(|| tool_args.clone());
             format!("{prefix}[WebSearch] {query}\n")
         }
         "search_images" => {
-            let desc = extract_json_field(&tool_args, "image_description")
-                .or_else(|| extract_json_field(&tool_args, "description"))
-                .or_else(|| extract_json_field(&tool_args, "query"))
-                .unwrap_or(tool_args.clone());
+            let desc = get_field("image_description")
+                .or_else(|| get_field("description"))
+                .or_else(|| get_field("query"))
+                .unwrap_or_else(|| tool_args.clone());
             format!("{prefix}[SearchImage] {desc}\n")
         }
         "chatroom_send" => {
-            let message = extract_json_field(&tool_args, "message").unwrap_or(tool_args.clone());
-            // 提取接收者 agent 名称（"to" 字段）
-            let recipient = extract_json_field(&tool_args, "to")
-                .or_else(|| extract_json_field(&tool_args, "recipient"));
+            let message = get_field("message").unwrap_or_else(|| tool_args.clone());
+            let recipient = get_field("to")
+                .or_else(|| get_field("recipient"));
             // 格式: [Agent 1 → Grok] message
             if let Some(to) = recipient {
                 if rollout_id.is_empty() {
@@ -81,12 +88,6 @@ fn extract_xml_content(raw: &str, tag: &str) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
-}
-
-/// 从 JSON 字符串中提取指定字段值
-fn extract_json_field(json_str: &str, field: &str) -> Option<String> {
-    let val: JsonValue = serde_json::from_str(json_str).ok()?;
-    val.get(field)?.as_str().map(|s| s.to_string())
 }
 
 /// 从 cardAttachment 中提取图片 markdown
@@ -259,7 +260,7 @@ impl BaseProcessor {
         if self.app_url.is_empty() {
             return format!("https://assets.grok.com{url_path}");
         }
-        let dl = DownloadService::new().await;
+        let dl = DownloadService::shared().await;
         let _ = dl.download(&url_path, &self.token, media_type).await;
         format!(
             "{}/v1/files/{media_type}{}",
@@ -436,8 +437,10 @@ impl StreamProcessor {
                     self.rollout_id = rid.to_string();
                 }
 
+                // 每条消息内 response_id 不变，预先计算一次避免重复 clone
+                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
+
                 if !self.role_sent {
-                    let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                     let chunk = self.base.sse_chunk(&id, &self.fingerprint, None, Some("assistant"), None);
                     self.role_sent = true;
                     yield Ok(Bytes::from(chunk));
@@ -447,7 +450,6 @@ impl StreamProcessor {
                 if let Some(img) = resp.get("streamingImageGenerationResponse") {
                     if self.show_think {
                         if !self.think_opened {
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("<think>\n"), None, None);
                             self.think_opened = true;
                             yield Ok(Bytes::from(chunk));
@@ -455,7 +457,6 @@ impl StreamProcessor {
                         let idx = img.get("imageIndex").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
                         let progress = img.get("progress").and_then(|v| v.as_i64()).unwrap_or(0);
                         let msg = format!("正在生成第{idx}张图片中，当前进度{progress}%\n");
-                        let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                         let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&msg), None, None);
                         yield Ok(Bytes::from(chunk));
                     }
@@ -465,7 +466,6 @@ impl StreamProcessor {
                 // 处理 cardAttachment
                 if let Some(card) = resp.get("cardAttachment") {
                     if let Some(md) = parse_card_attachment(card) {
-                        let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                         let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&md), None, None);
                         yield Ok(Bytes::from(chunk));
                     }
@@ -476,11 +476,9 @@ impl StreamProcessor {
                 if let Some(mr) = resp.get("modelResponse") {
                     if self.think_opened && self.show_think {
                         if let Some(msg) = mr.get("message").and_then(|v| v.as_str()) {
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&(msg.to_string() + "\n")), None, None);
                             yield Ok(Bytes::from(chunk));
                         }
-                        let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                         let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("</think>\n"), None, None);
                         self.think_opened = false;
                         yield Ok(Bytes::from(chunk));
@@ -491,9 +489,8 @@ impl StreamProcessor {
                             if let Some(url) = url_val.as_str() {
                                 let parts: Vec<&str> = url.split('/').collect();
                                 let img_id = parts.get(parts.len().saturating_sub(2)).copied().unwrap_or("image");
-                                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                                 if self.image_format == "base64" {
-                                    let dl = DownloadService::new().await;
+                                    let dl = DownloadService::shared().await;
                                     if let Ok(b64) = dl.to_base64(url, &self.base.token, "image").await {
                                         let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&format!("![{img_id}]({b64})\n")), None, None);
                                         yield Ok(Bytes::from(chunk));
@@ -532,13 +529,11 @@ impl StreamProcessor {
                                 continue; // 隐藏思维内容
                             }
                             if !self.think_opened {
-                                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                                 let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("<think>\n"), None, None);
                                 self.think_opened = true;
                                 yield Ok(Bytes::from(chunk));
                             }
                         } else if self.think_opened {
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("\n</think>\n"), None, None);
                             self.think_opened = false;
                             yield Ok(Bytes::from(chunk));
@@ -557,7 +552,6 @@ impl StreamProcessor {
                             filtered.contains(&open) || filtered.contains(&close)
                         }) {
                             has_content = true;
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&filtered), None, None);
                             yield Ok(Bytes::from(chunk));
                         }
@@ -572,26 +566,25 @@ impl StreamProcessor {
                     }
                 }
             }
+            // 循环结束后最终清理
+            let final_id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
             if self.think_opened {
-                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
-                let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some("</think>\n"), None, None);
+                let chunk = self.base.sse_chunk(&final_id, &self.fingerprint, Some("</think>\n"), None, None);
                 yield Ok(Bytes::from(chunk));
             }
             // 流异常中断且无有效内容时，输出错误提示
             if let Some(ref err) = stream_error {
                 if !has_content {
-                    let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                     if !self.role_sent {
-                        let role_chunk = self.base.sse_chunk(&id, &self.fingerprint, None, Some("assistant"), None);
+                        let role_chunk = self.base.sse_chunk(&final_id, &self.fingerprint, None, Some("assistant"), None);
                         yield Ok(Bytes::from(role_chunk));
                     }
                     let error_msg = format!("[upstream error] 上游连接中断，未收到有效响应: {err}");
-                    let chunk = self.base.sse_chunk(&id, &self.fingerprint, Some(&error_msg), None, None);
+                    let chunk = self.base.sse_chunk(&final_id, &self.fingerprint, Some(&error_msg), None, None);
                     yield Ok(Bytes::from(chunk));
                 }
             }
-            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
-            let chunk = self.base.sse_chunk(&id, &self.fingerprint, None, None, Some("stop"));
+            let chunk = self.base.sse_chunk(&final_id, &self.fingerprint, None, None, Some("stop"));
             yield Ok(Bytes::from(chunk));
             yield Ok(Bytes::from("data: [DONE]\n\n"));
         }
@@ -682,7 +675,7 @@ impl CollectProcessor {
                         for url_val in urls {
                             if let Some(url) = url_val.as_str() {
                                 let final_url = if self.image_format == "base64" {
-                                    let dl = DownloadService::new().await;
+                                    let dl = DownloadService::shared().await;
                                     dl.to_base64(url, &self.base.token, "image")
                                         .await
                                         .unwrap_or_else(|_| url.to_string())
@@ -795,8 +788,9 @@ impl VideoStreamProcessor {
                 if let Some(rid) = resp.get("responseId").and_then(|v| v.as_str()) {
                     self.response_id = Some(rid.to_string());
                 }
+                // 每条消息内预先计算一次
+                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                 if !self.role_sent {
-                    let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                     let chunk = self.base.sse_chunk(&id, "", None, Some("assistant"), None);
                     self.role_sent = true;
                     yield Ok(Bytes::from(chunk));
@@ -806,19 +800,16 @@ impl VideoStreamProcessor {
                     let progress = video_resp.get("progress").and_then(|v| v.as_i64()).unwrap_or(0);
                     if self.show_think {
                         if !self.think_opened {
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, "", Some("<think>\n"), None, None);
                             self.think_opened = true;
                             yield Ok(Bytes::from(chunk));
                         }
                         let msg = format!("正在生成视频中，当前进度{progress}%\n");
-                        let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                         let chunk = self.base.sse_chunk(&id, "", Some(&msg), None, None);
                         yield Ok(Bytes::from(chunk));
                     }
                     if progress == 100 {
                         if self.think_opened && self.show_think {
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, "", Some("</think>\n"), None, None);
                             self.think_opened = false;
                             yield Ok(Bytes::from(chunk));
@@ -828,7 +819,6 @@ impl VideoStreamProcessor {
                         if !video_url.is_empty() {
                             // upscale 逻辑
                             let actual_video_url = if self.upscale_on_finish {
-                                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                                 let chunk = self.base.sse_chunk(&id, "", Some("正在对视频进行超分辨率\n"), None, None);
                                 yield Ok(Bytes::from(chunk));
                                 VideoUpscaleService::upscale(&self.base.token, video_url)
@@ -840,7 +830,6 @@ impl VideoStreamProcessor {
                             let final_video = self.base.process_url(&actual_video_url, "video").await;
                             let final_thumb = if thumb_url.is_empty() { String::new() } else { self.base.process_url(thumb_url, "image").await };
                             let html = Self::build_video_html(&final_video, &final_thumb);
-                            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
                             let chunk = self.base.sse_chunk(&id, "", Some(&html), None, None);
                             yield Ok(Bytes::from(chunk));
                         }
@@ -855,13 +844,12 @@ impl VideoStreamProcessor {
                     }
                 }
             }
+            let final_id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
             if self.think_opened {
-                let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
-                let chunk = self.base.sse_chunk(&id, "", Some("</think>\n"), None, None);
+                let chunk = self.base.sse_chunk(&final_id, "", Some("</think>\n"), None, None);
                 yield Ok(Bytes::from(chunk));
             }
-            let id = self.response_id.clone().unwrap_or_else(|| format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()));
-            let chunk = self.base.sse_chunk(&id, "", None, None, Some("stop"));
+            let chunk = self.base.sse_chunk(&final_id, "", None, None, Some("stop"));
             yield Ok(Bytes::from(chunk));
             yield Ok(Bytes::from("data: [DONE]\n\n"));
         }
@@ -1051,7 +1039,7 @@ impl ImageStreamProcessor {
                         for url in urls {
                             if let Some(url) = url.as_str() {
                                 if self.return_base64 {
-                                    let dl = DownloadService::new().await;
+                                    let dl = DownloadService::shared().await;
                                     if let Ok(b64) = dl.to_base64(url, &self.base.token, "image").await {
                                         let b64_str = if let Some(idx) = b64.find(',') {
                                             b64[idx + 1..].to_string()
@@ -1149,7 +1137,7 @@ impl ImageCollectProcessor {
                         for url in urls {
                             if let Some(url) = url.as_str() {
                                 if self.return_base64 {
-                                    let dl = DownloadService::new().await;
+                                    let dl = DownloadService::shared().await;
                                     if let Ok(b64) =
                                         dl.to_base64(url, &self.base.token, "image").await
                                     {

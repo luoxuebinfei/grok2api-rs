@@ -160,6 +160,7 @@ static TASKS: Lazy<RwLock<HashMap<String, Arc<Mutex<BatchTask>>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 pub async fn create_task(total: usize) -> Arc<Mutex<BatchTask>> {
+    ensure_cleanup_started();
     let task = Arc::new(Mutex::new(BatchTask::new(total)));
     let id = task.lock().await.id.clone();
     TASKS.write().await.insert(id, task.clone());
@@ -177,4 +178,52 @@ pub async fn delete_task(task_id: &str) {
 pub async fn expire_task(task_id: String, delay: u64) {
     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
     delete_task(&task_id).await;
+}
+
+/// 后台定时清理过期 BatchTask（已完成/失败/取消且超过 TTL 的任务）
+static CLEANUP_STARTED: std::sync::Once = std::sync::Once::new();
+
+const TASK_TTL_SECS: f64 = 1800.0; // 30 分钟
+const CLEANUP_INTERVAL_SECS: u64 = 300; // 5 分钟
+
+pub fn ensure_cleanup_started() {
+    CLEANUP_STARTED.call_once(|| {
+        tokio::spawn(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(CLEANUP_INTERVAL_SECS)).await;
+                cleanup_expired_tasks().await;
+            }
+        });
+    });
+}
+
+async fn cleanup_expired_tasks() {
+    let now = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+    let mut to_remove = Vec::new();
+
+    {
+        let tasks = TASKS.read().await;
+        for (id, task_arc) in tasks.iter() {
+            let task = task_arc.lock().await;
+            let is_terminal = task.status == "done"
+                || task.status == "error"
+                || task.status == "cancelled";
+            if is_terminal && (now - task.created_at) > TASK_TTL_SECS {
+                to_remove.push(id.clone());
+            }
+            // 超长时间运行的任务也清理（可能异常挂起）
+            if task.status == "running" && (now - task.created_at) > TASK_TTL_SECS * 2.0 {
+                to_remove.push(id.clone());
+            }
+        }
+    }
+
+    if !to_remove.is_empty() {
+        let count = to_remove.len();
+        let mut tasks = TASKS.write().await;
+        for id in &to_remove {
+            tasks.remove(id);
+        }
+        tracing::info!("BatchTask 自动清理: 移除 {count} 个过期任务");
+    }
 }

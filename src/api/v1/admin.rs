@@ -623,7 +623,7 @@ async fn get_cache_stats_api(
 ) -> Result<Response, ApiError> {
     verify_api_key(&headers).await?;
 
-    let dl = DownloadService::new().await;
+    let dl = DownloadService::shared().await;
     let image_stats = dl.get_stats("image");
     let video_stats = dl.get_stats("video");
 
@@ -674,7 +674,7 @@ async fn get_cache_stats_api(
             selected_tokens.truncate(max_tokens);
             truncated = true;
         }
-        let list_service = ListService::new().await;
+        let list_service = ListService::shared().await;
         let mut total = 0usize;
         for token in &selected_tokens {
             match list_service.count(token).await {
@@ -704,7 +704,7 @@ async fn get_cache_stats_api(
             tokens.truncate(max_tokens);
             truncated = true;
         }
-        let list_service = ListService::new().await;
+        let list_service = ListService::shared().await;
         let mut total = 0usize;
         for token in &tokens {
             match list_service.count(token).await {
@@ -719,7 +719,7 @@ async fn get_cache_stats_api(
         }
         online_stats = json!({"count": total, "status": if tokens.is_empty() {"no_token"} else {"ok"}, "token": null, "last_asset_clear_at": null});
     } else if let Some(token) = selected_token {
-        let list_service = ListService::new().await;
+        let list_service = ListService::shared().await;
         match list_service.count(&token).await {
             Ok(count) => {
                 online_stats = json!({"count": count, "status": "ok", "token": token});
@@ -760,7 +760,7 @@ async fn clear_local_cache_api(
 ) -> Result<Response, ApiError> {
     verify_api_key(&headers).await?;
     let cache_type = data.cache_type.unwrap_or_else(|| "image".to_string());
-    let dl = DownloadService::new().await;
+    let dl = DownloadService::shared().await;
     let result = dl.clear(&cache_type);
     Ok(Json(json!({"status": "success", "result": result})).into_response())
 }
@@ -781,7 +781,7 @@ async fn list_local_cache_api(
     let cache_type = query.cache_type.unwrap_or_else(|| "image".to_string());
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(1000);
-    let dl = DownloadService::new().await;
+    let dl = DownloadService::shared().await;
     let result = dl.list_files(&cache_type, page, page_size);
     Ok(Json(json!({"status": "success", "total": result["total"], "page": result["page"], "page_size": result["page_size"], "items": result["items"]})).into_response())
 }
@@ -802,7 +802,7 @@ async fn delete_local_cache_item_api(
     let name = data
         .name
         .ok_or_else(|| ApiError::invalid_request("Missing file name"))?;
-    let dl = DownloadService::new().await;
+    let dl = DownloadService::shared().await;
     let result = dl.delete_file(&cache_type, &name);
     Ok(Json(json!({"status": "success", "result": result})).into_response())
 }
@@ -820,7 +820,7 @@ async fn clear_online_cache_api(
     verify_api_key(&headers).await?;
     let mgr = get_token_manager().await;
     let mut mgr = mgr.lock().await;
-    let service = DeleteService::new().await;
+    let service = DeleteService::shared().await;
 
     if let Some(tokens) = data.tokens {
         let mut token_list = tokens
@@ -884,7 +884,7 @@ async fn clear_online_cache_api_async(
 ) -> Result<Response, ApiError> {
     verify_api_key(&headers).await?;
     let mgr = get_token_manager().await;
-    let service = DeleteService::new().await;
+    let service = DeleteService::shared().await;
 
     let tokens = data
         .tokens
@@ -1064,7 +1064,7 @@ async fn load_online_cache_api_async(
     let max_tokens_for_spawn = max_tokens;
     let original_count_for_spawn = original_count;
     tokio::spawn(async move {
-        let list_service = ListService::new().await;
+        let list_service = ListService::shared().await;
         let results = run_in_batches(
             tokens_for_spawn.clone(),
             move |token| {
@@ -1095,7 +1095,7 @@ async fn load_online_cache_api_async(
                 online_details.push(detail);
             }
         }
-        let dl = DownloadService::new().await;
+        let dl = DownloadService::shared().await;
         let image_stats = dl.get_stats("image");
         let video_stats = dl.get_stats("video");
 
