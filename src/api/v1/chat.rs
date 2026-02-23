@@ -6,7 +6,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use crate::core::auth::verify_api_key;
+use crate::core::auth::verify_any_key;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 use crate::services::grok::chat::{ChatResult, ChatService, MessageExtractor};
@@ -14,8 +14,8 @@ use crate::services::grok::image_edit::ImageEditService;
 use crate::services::grok::media::{VideoResult, VideoService};
 use crate::services::grok::model::{Cost, ModelService};
 use crate::services::grok::processor::{
-    CollectProcessor, ImageStreamProcessor, StreamProcessor,
-    VideoCollectProcessor, VideoStreamProcessor,
+    CollectProcessor, ImageStreamProcessor, StreamProcessor, VideoCollectProcessor,
+    VideoStreamProcessor,
 };
 use crate::services::token::{EffortType, TokenService};
 
@@ -169,7 +169,7 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
-    verify_api_key(&headers).await?;
+    verify_any_key(&headers).await?;
     let enabled: bool = get_config("downstream.enable_chat_completions", true).await;
     if !enabled {
         return Err(ApiError::not_found("Endpoint disabled"));
@@ -207,7 +207,8 @@ async fn chat_completions(
                 upscale_on_finish,
             } => {
                 if is_stream {
-                    let processor = VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
+                    let processor =
+                        VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
                     } else {
@@ -227,7 +228,8 @@ async fn chat_completions(
                     headers.insert("Content-Type", "text/event-stream".parse().unwrap());
                     Ok((headers, axum::body::Body::from_stream(body_stream)).into_response())
                 } else {
-                    let processor = VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
+                    let processor =
+                        VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
                     let result = processor.process(line_stream).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
@@ -242,8 +244,7 @@ async fn chat_completions(
         }
     } else if model_info.is_image_edit {
         // 图片编辑分支：从消息中提取文本和图片
-        let (prompt, attachments) =
-            MessageExtractor::extract(&req.messages, false)?;
+        let (prompt, attachments) = MessageExtractor::extract(&req.messages, false)?;
         let image_data: Vec<String> = attachments
             .into_iter()
             .filter(|(kind, _)| kind == "image")
@@ -276,8 +277,7 @@ async fn chat_completions(
                 return_base64,
             )
             .await?;
-            let processor =
-                ImageStreamProcessor::new(&req.model, &token, n, return_base64).await;
+            let processor = ImageStreamProcessor::new(&req.model, &token, n, return_base64).await;
             let token_clone = token.clone();
             let body_stream = stream! {
                 let mut inner = Box::pin(processor.process(response));

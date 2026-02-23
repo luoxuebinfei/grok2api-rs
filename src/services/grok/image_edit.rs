@@ -125,7 +125,8 @@ impl ImageEditService {
         n: usize,
         return_base64: bool,
     ) -> Result<Vec<JsonValue>, ApiError> {
-        let response = Self::edit_stream(token, model_info, prompt, images, n, return_base64).await?;
+        let response =
+            Self::edit_stream(token, model_info, prompt, images, n, return_base64).await?;
         let processor =
             ImageCollectProcessor::new(&model_info.model_id, token, return_base64).await;
         Ok(processor.process(response).await)

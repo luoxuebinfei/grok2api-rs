@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 use std::convert::Infallible;
 
-use crate::core::auth::verify_api_key;
+use crate::core::auth::verify_any_key;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 use crate::services::grok::chat::{ChatResult, ChatService};
@@ -80,10 +80,10 @@ fn normalize_message(msg: &JsonValue) -> JsonValue {
 }
 
 fn build_messages(req: &ResponsesRequest) -> Result<Vec<JsonValue>, ApiError> {
-    if let Some(list) = &req.messages {
-        if !list.is_empty() {
-            return Ok(list.iter().map(normalize_message).collect());
-        }
+    if let Some(list) = &req.messages
+        && !list.is_empty()
+    {
+        return Ok(list.iter().map(normalize_message).collect());
     }
     if let Some(input) = &req.input {
         if let Some(text) = input.as_str() {
@@ -165,7 +165,7 @@ async fn responses(
     headers: HeaderMap,
     Json(req): Json<ResponsesRequest>,
 ) -> Result<Response, ApiError> {
-    verify_api_key(&headers).await?;
+    verify_any_key(&headers).await?;
     let enabled: bool = get_config("downstream.enable_responses", true).await;
     if !enabled {
         return Err(ApiError::not_found("Endpoint disabled"));
@@ -213,7 +213,8 @@ async fn responses(
                 upscale_on_finish,
             } => {
                 if is_stream {
-                    let processor = VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
+                    let processor =
+                        VideoStreamProcessor::new(&model, &token, think, upscale_on_finish).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
                     } else {
@@ -254,22 +255,22 @@ async fn responses(
                                 if payload == "[DONE]" {
                                     continue;
                                 }
-                                if let Ok(val) = serde_json::from_str::<JsonValue>(payload) {
-                                    if let Some(delta) = val.get("choices")
+                                if let Ok(val) = serde_json::from_str::<JsonValue>(payload)
+                                    && let Some(delta) = val.get("choices")
                                         .and_then(|v| v.get(0))
                                         .and_then(|v| v.get("delta"))
                                         .and_then(|v| v.get("content"))
-                                        .and_then(|v| v.as_str()) {
-                                        full_text.push_str(delta);
-                                        let evt = json!({
-                                            "type": "response.output_text.delta",
-                                            "response_id": response_id,
-                                            "output_index": 0,
-                                            "content_index": 0,
-                                            "delta": delta
-                                        });
-                                        yield sse_ok(format!("data: {}\n\n", evt));
-                                    }
+                                        .and_then(|v| v.as_str())
+                                {
+                                    full_text.push_str(delta);
+                                    let evt = json!({
+                                        "type": "response.output_text.delta",
+                                        "response_id": response_id,
+                                        "output_index": 0,
+                                        "content_index": 0,
+                                        "delta": delta
+                                    });
+                                    yield sse_ok(format!("data: {}\n\n", evt));
                                 }
                             }
                         }
@@ -310,7 +311,8 @@ async fn responses(
                     headers.insert("Content-Type", "text/event-stream".parse().unwrap());
                     Ok((headers, axum::body::Body::from_stream(body_stream)).into_response())
                 } else {
-                    let processor = VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
+                    let processor =
+                        VideoCollectProcessor::new(&model, &token, upscale_on_finish).await;
                     let result = processor.process(line_stream).await;
                     let effort = if model_info.cost == Cost::High {
                         EffortType::High
@@ -396,22 +398,22 @@ async fn responses(
                                 if payload == "[DONE]" {
                                     continue;
                                 }
-                                if let Ok(val) = serde_json::from_str::<JsonValue>(payload) {
-                                    if let Some(delta) = val.get("choices")
+                                if let Ok(val) = serde_json::from_str::<JsonValue>(payload)
+                                    && let Some(delta) = val.get("choices")
                                         .and_then(|v| v.get(0))
                                         .and_then(|v| v.get("delta"))
                                         .and_then(|v| v.get("content"))
-                                        .and_then(|v| v.as_str()) {
-                                        full_text.push_str(delta);
-                                        let evt = json!({
-                                            "type": "response.output_text.delta",
-                                            "response_id": response_id,
-                                            "output_index": 0,
-                                            "content_index": 0,
-                                            "delta": delta
-                                        });
-                                        yield sse_ok(format!("data: {}\n\n", evt));
-                                    }
+                                        .and_then(|v| v.as_str())
+                                {
+                                    full_text.push_str(delta);
+                                    let evt = json!({
+                                        "type": "response.output_text.delta",
+                                        "response_id": response_id,
+                                        "output_index": 0,
+                                        "content_index": 0,
+                                        "delta": delta
+                                    });
+                                    yield sse_ok(format!("data: {}\n\n", evt));
                                 }
                             }
                         }

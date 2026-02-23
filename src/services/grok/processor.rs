@@ -42,8 +42,7 @@ fn extract_tool_text(raw: &str, rollout_id: &str) -> String {
             format!("{prefix}[SearchImage] {desc}\n")
         }
         "chatroom_send" => {
-            let message =
-                extract_json_field(&tool_args, "message").unwrap_or(tool_args.clone());
+            let message = extract_json_field(&tool_args, "message").unwrap_or(tool_args.clone());
             // 提取接收者 agent 名称（"to" 字段）
             let recipient = extract_json_field(&tool_args, "to")
                 .or_else(|| extract_json_field(&tool_args, "recipient"));
@@ -114,7 +113,9 @@ fn parse_card_attachment(card: &JsonValue) -> Option<String> {
 }
 
 /// 非流式：从 cardAttachmentsJson 数组构建 card_map
-fn build_card_map(card_attachments: &[JsonValue]) -> std::collections::HashMap<String, (String, String)> {
+fn build_card_map(
+    card_attachments: &[JsonValue],
+) -> std::collections::HashMap<String, (String, String)> {
     let mut map = std::collections::HashMap::new();
     for raw in card_attachments {
         let json_str = match raw.as_str() {
@@ -153,7 +154,10 @@ fn build_card_map(card_attachments: &[JsonValue]) -> std::collections::HashMap<S
 }
 
 /// 非流式：替换 <grok:render card_id="..."> 为实际图片
-fn replace_render_cards(content: &str, card_map: &std::collections::HashMap<String, (String, String)>) -> String {
+fn replace_render_cards(
+    content: &str,
+    card_map: &std::collections::HashMap<String, (String, String)>,
+) -> String {
     // 匹配 <grok:render ...card_id="ID"...>...</grok:render> 或自闭合
     let mut result = content.to_string();
     // 简单循环替换，避免 regex 依赖
@@ -173,12 +177,17 @@ fn replace_render_cards(content: &str, card_map: &std::collections::HashMap<Stri
             break;
         };
 
-        let replacement = if let Some((title, url)) = card_id.as_deref().and_then(|id| card_map.get(id)) {
-            let t = if title.trim().is_empty() { "image" } else { title.trim() };
-            format!("![{t}]({url})")
-        } else {
-            String::new()
-        };
+        let replacement =
+            if let Some((title, url)) = card_id.as_deref().and_then(|id| card_map.get(id)) {
+                let t = if title.trim().is_empty() {
+                    "image"
+                } else {
+                    title.trim()
+                };
+                format!("![{t}]({url})")
+            } else {
+                String::new()
+            };
         result.replace_range(start..end_pos, &replacement);
     }
     result
@@ -346,8 +355,7 @@ impl StreamProcessor {
                 if let Some(end) = remaining.find("</xai:tool_usage_card>") {
                     self.tool_usage_buffer
                         .push_str(&remaining[..end + "</xai:tool_usage_card>".len()]);
-                    let tool_text =
-                        extract_tool_text(&self.tool_usage_buffer, &self.rollout_id);
+                    let tool_text = extract_tool_text(&self.tool_usage_buffer, &self.rollout_id);
                     output.push_str(&tool_text);
                     self.tool_usage_opened = false;
                     self.tool_usage_buffer.clear();
@@ -365,11 +373,9 @@ impl StreamProcessor {
                 // 检查是否在同一 chunk 中有结束标签
                 let after_start = &remaining[start..];
                 if let Some(end) = after_start.find("</xai:tool_usage_card>") {
-                    self.tool_usage_buffer = after_start
-                        [..end + "</xai:tool_usage_card>".len()]
-                        .to_string();
-                    let tool_text =
-                        extract_tool_text(&self.tool_usage_buffer, &self.rollout_id);
+                    self.tool_usage_buffer =
+                        after_start[..end + "</xai:tool_usage_card>".len()].to_string();
+                    let tool_text = extract_tool_text(&self.tool_usage_buffer, &self.rollout_id);
                     output.push_str(&tool_text);
                     self.tool_usage_opened = false;
                     self.tool_usage_buffer.clear();
@@ -623,7 +629,12 @@ impl CollectProcessor {
                 }
                 // 检测流错误标记
                 if let Some(err_msg) = line.strip_prefix("{\"__stream_error__\":\"") {
-                    stream_error = Some(err_msg.trim_end_matches("\"}").replace("\\\"", "\"").to_string());
+                    stream_error = Some(
+                        err_msg
+                            .trim_end_matches("\"}")
+                            .replace("\\\"", "\"")
+                            .to_string(),
+                    );
                     break;
                 }
                 let data: JsonValue = match serde_json::from_str(&line) {
@@ -733,7 +744,12 @@ pub struct VideoStreamProcessor {
 }
 
 impl VideoStreamProcessor {
-    pub async fn new(model: &str, token: &str, think: Option<bool>, upscale_on_finish: bool) -> Self {
+    pub async fn new(
+        model: &str,
+        token: &str,
+        think: Option<bool>,
+        upscale_on_finish: bool,
+    ) -> Self {
         let show = match think {
             Some(v) => v,
             None => get_config("grok.thinking", false).await,
@@ -921,7 +937,8 @@ impl VideoCollectProcessor {
                             } else {
                                 video_url.to_string()
                             };
-                            let final_video = self.base.process_url(&actual_video_url, "video").await;
+                            let final_video =
+                                self.base.process_url(&actual_video_url, "video").await;
                             let final_thumb = if thumb_url.is_empty() {
                                 String::new()
                             } else {

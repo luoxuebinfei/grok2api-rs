@@ -99,7 +99,10 @@ fn normalize_json_text(raw: &str) -> String {
     }
 
     if text.starts_with("for (;;);") {
-        text = text.trim_start_matches("for (;;);").trim_start().to_string();
+        text = text
+            .trim_start_matches("for (;;);")
+            .trim_start()
+            .to_string();
     }
 
     text.trim().to_string()

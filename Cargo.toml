@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-axum = { version = "0.7", features = ["macros", "multipart"] }
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 tokio = { version = "1.44", features = ["full"] }
 tower = "0.4"

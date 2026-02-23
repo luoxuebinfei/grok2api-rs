@@ -3,6 +3,7 @@ mod chat;
 mod files;
 mod image;
 mod models;
+mod public;
 mod responses;
 
 use axum::Router;
@@ -15,4 +16,5 @@ pub fn router() -> Router {
         .merge(models::router())
         .merge(files::router())
         .merge(admin::router())
+        .merge(public::router())
 }

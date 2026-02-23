@@ -51,7 +51,11 @@ impl VideoService {
             .to_string())
     }
 
-    pub async fn create_image_post(&self, token: &str, image_url: &str) -> Result<String, ApiError> {
+    pub async fn create_image_post(
+        &self,
+        token: &str,
+        image_url: &str,
+    ) -> Result<String, ApiError> {
         let headers = self.build_headers(token, "https://grok.com/imagine").await;
         let payload =
             serde_json::json!({"mediaType": "MEDIA_POST_TYPE_IMAGE", "mediaUrl": image_url});

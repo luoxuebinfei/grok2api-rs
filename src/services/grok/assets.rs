@@ -247,7 +247,8 @@ impl UploadService {
 
         if status == 200 {
             let value: JsonValue = serde_json::from_slice(&resp_body).map_err(|e| {
-                let preview = crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
+                let preview =
+                    crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
                 ApiError::upstream(format!("Upload parse error: {e}; body: {preview}"))
             })?;
             let file_id = value
@@ -324,13 +325,15 @@ impl ListService {
             )
             .await?;
             if status != 200 {
-                let preview = crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
+                let preview =
+                    crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
                 return Err(ApiError::upstream(format!(
                     "List failed: {status}; body: {preview}"
                 )));
             }
             let value: JsonValue = serde_json::from_slice(&resp_body).map_err(|e| {
-                let preview = crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
+                let preview =
+                    crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
                 ApiError::upstream(format!("List parse error: {e}; body: {preview}"))
             })?;
             let page_assets = value
@@ -492,8 +495,10 @@ impl DownloadService {
         )
         .await?;
         if status != 200 {
-            let content_type = header_value(&resp_headers, "content-type").unwrap_or_else(|| "<unknown>".to_string());
-            let preview = crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
+            let content_type = header_value(&resp_headers, "content-type")
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let preview =
+                crate::services::grok::wreq_client::body_preview_from_bytes(&resp_body, 220);
             return Err(ApiError::upstream(format!(
                 "Download failed: {status}; content-type: {content_type}; body: {preview}"
             )));

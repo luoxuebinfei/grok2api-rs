@@ -1,11 +1,11 @@
 use std::convert::Infallible;
 
 use async_stream::stream;
-use base64::Engine as _;
+use axum::extract::Multipart;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::post};
-use axum::extract::Multipart;
+use base64::Engine as _;
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::future::join_all;
@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 use tokio::sync::mpsc;
 
-use crate::core::auth::verify_api_key;
+use crate::core::auth::verify_any_key;
 use crate::core::config::get_config;
 use crate::core::exceptions::ApiError;
 use crate::services::grok::chat::GrokChatService;
@@ -68,7 +68,7 @@ async fn create_image(
     headers: HeaderMap,
     Json(req): Json<ImageRequest>,
 ) -> Result<Response, ApiError> {
-    verify_api_key(&headers).await?;
+    verify_any_key(&headers).await?;
     let enabled: bool = get_config("downstream.enable_images", true).await;
     if !enabled {
         return Err(ApiError::not_found("Endpoint disabled"));
@@ -128,7 +128,7 @@ async fn create_image(
         return Ok((headers, axum::body::Body::from_stream(body_stream)).into_response());
     }
 
-    let calls_needed = (n as usize + 1) / 2;
+    let calls_needed = (n as usize).div_ceil(2);
     let effort = if model_info.cost == Cost::High {
         EffortType::High
     } else {
@@ -173,7 +173,7 @@ async fn create_image(
         });
     }
 
-    let created = chrono::Utc::now().timestamp() as i64;
+    let created = chrono::Utc::now().timestamp();
     let usage = json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0});
     let resp = json!({"created": created, "data": all_images, "usage": usage});
 
@@ -184,7 +184,7 @@ async fn create_image_nsfw(
     headers: HeaderMap,
     Json(req): Json<ImageRequest>,
 ) -> Result<Response, ApiError> {
-    verify_api_key(&headers).await?;
+    verify_any_key(&headers).await?;
 
     let enabled: bool = get_config("downstream.enable_images", true).await;
     if !enabled {
@@ -199,10 +199,10 @@ async fn create_image_nsfw(
         return Err(ApiError::invalid_request("Prompt cannot be empty").with_param("prompt"));
     }
 
-    if let Some(n) = req.n {
-        if n == 0 || n > 4 {
-            return Err(ApiError::invalid_request("n must be between 1 and 4").with_param("n"));
-        }
+    if let Some(n) = req.n
+        && (n == 0 || n > 4)
+    {
+        return Err(ApiError::invalid_request("n must be between 1 and 4").with_param("n"));
     }
 
     let stream = req.stream.unwrap_or(false);
@@ -294,7 +294,7 @@ async fn create_image_nsfw(
     Ok((StatusCode::OK, Json(resp)).into_response())
 }
 
-async fn call_grok_image(
+pub(crate) async fn call_grok_image(
     token: &str,
     prompt: &str,
     model_info: &ModelInfo,
@@ -319,7 +319,7 @@ async fn call_grok_image(
         .await
 }
 
-async fn call_grok_images_once(
+pub(crate) async fn call_grok_images_once(
     token: &str,
     prompt: &str,
     model_info: &ModelInfo,
@@ -346,11 +346,8 @@ async fn resolve_image_output_format(
 }
 
 /// POST /v1/images/edits — 图片编辑端点（Multipart form-data）
-async fn edit_image(
-    headers: HeaderMap,
-    mut multipart: Multipart,
-) -> Result<Response, ApiError> {
-    verify_api_key(&headers).await?;
+async fn edit_image(headers: HeaderMap, mut multipart: Multipart) -> Result<Response, ApiError> {
+    verify_any_key(&headers).await?;
     let enabled: bool = get_config("downstream.enable_images", true).await;
     if !enabled {
         return Err(ApiError::not_found("Endpoint disabled"));
@@ -387,10 +384,7 @@ async fn edit_image(
             }
             "image" | "file" => {
                 // 读取图片文件为 base64 data URI
-                let content_type = field
-                    .content_type()
-                    .unwrap_or("image/png")
-                    .to_string();
+                let content_type = field.content_type().unwrap_or("image/png").to_string();
                 if let Ok(bytes) = field.bytes().await {
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     let data_uri = format!("data:{content_type};base64,{b64}");
@@ -408,9 +402,7 @@ async fn edit_image(
         return Err(ApiError::invalid_request("Prompt cannot be empty").with_param("prompt"));
     }
     if image_data_list.is_empty() {
-        return Err(
-            ApiError::invalid_request("At least one image is required").with_param("image"),
-        );
+        return Err(ApiError::invalid_request("At least one image is required").with_param("image"));
     }
 
     let n = n.clamp(1, 10);
@@ -427,7 +419,8 @@ async fn edit_image(
     }
 
     let token = TokenService::get_token_for_model(&model_id).await?;
-    let output_format = ImageOutputFormat::parse(&response_format).unwrap_or(ImageOutputFormat::Base64);
+    let output_format =
+        ImageOutputFormat::parse(&response_format).unwrap_or(ImageOutputFormat::Base64);
     let return_base64 = output_format.is_base64();
 
     let effort = if model_info.cost == Cost::High {
@@ -461,9 +454,7 @@ async fn edit_image(
         resp_headers.insert("Cache-Control", "no-cache".parse().unwrap());
         resp_headers.insert("Connection", "keep-alive".parse().unwrap());
         resp_headers.insert("Content-Type", "text/event-stream".parse().unwrap());
-        return Ok(
-            (resp_headers, axum::body::Body::from_stream(body_stream)).into_response(),
-        );
+        return Ok((resp_headers, axum::body::Body::from_stream(body_stream)).into_response());
     }
 
     // 非流式
@@ -479,10 +470,7 @@ async fn edit_image(
 
     let _ = TokenService::consume(&token, effort).await;
 
-    let data: Vec<JsonValue> = images
-        .into_iter()
-        .take(n as usize)
-        .collect();
+    let data: Vec<JsonValue> = images.into_iter().take(n as usize).collect();
 
     let created = chrono::Utc::now().timestamp();
     let usage = json!({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0});

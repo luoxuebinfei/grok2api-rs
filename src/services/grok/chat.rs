@@ -304,8 +304,7 @@ impl GrokChatService {
         let timeout: u64 = get_config("grok.timeout", 120u64).await;
         let proxy: String = get_config("grok.base_proxy_url", String::new()).await;
         let client = build_client(Some(&proxy), timeout).await?;
-        let request = apply_headers(client.post(CHAT_API), &headers)
-            .body(payload.to_string());
+        let request = apply_headers(client.post(CHAT_API), &headers).body(payload.to_string());
 
         let response = request
             .send()
@@ -320,10 +319,7 @@ impl GrokChatService {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("<unknown>")
                 .to_string();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| String::new());
+            let body = response.text().await.unwrap_or_else(|_| String::new());
             let preview = body_preview(&body, 220);
             if !preview.is_empty() {
                 tracing::warn!(

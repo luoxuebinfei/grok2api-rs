@@ -42,7 +42,11 @@ fn build_user_agent(emulation: &str) -> String {
     let lower = emulation.to_ascii_lowercase();
     if lower.starts_with("firefox") {
         let ver = extract_version(&lower, "firefox");
-        let ver = if ver.is_empty() { "130".to_string() } else { ver };
+        let ver = if ver.is_empty() {
+            "130".to_string()
+        } else {
+            ver
+        };
         return format!(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{ver}.0) \
              Gecko/20100101 Firefox/{ver}.0"
@@ -112,9 +116,7 @@ fn build_arch_hint() -> &'static str {
 
 /// 为 Chromium 系浏览器构建 Sec-Ch-Ua 头的值
 fn build_sec_ch_ua(brand: &str, version: &str) -> String {
-    format!(
-        "\"{brand}\";v=\"{version}\", \"Chromium\";v=\"{version}\", \"Not(A:Brand\";v=\"24\""
-    )
+    format!("\"{brand}\";v=\"{version}\", \"Chromium\";v=\"{version}\", \"Not(A:Brand\";v=\"24\"")
 }
 
 // ---------------------------------------------------------------------------
@@ -175,10 +177,7 @@ pub async fn build_grok_headers(
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
     headers.insert(
         "Content-Type",
-        content_type
-            .unwrap_or("application/json")
-            .parse()
-            .unwrap(),
+        content_type.unwrap_or("application/json").parse().unwrap(),
     );
     headers.insert("Origin", "https://grok.com".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());

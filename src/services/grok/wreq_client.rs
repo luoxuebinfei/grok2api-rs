@@ -215,8 +215,6 @@ pub fn line_stream_from_response(response: wreq::Response) -> PinLineStream {
     Box::pin(stream)
 }
 
-
-
 pub fn body_preview_from_bytes(bytes: &[u8], max_chars: usize) -> String {
     body_preview(&String::from_utf8_lossy(bytes), max_chars)
 }

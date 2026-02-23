@@ -25,6 +25,8 @@ app_key = "grok2api"
 api_key = ""
 image_format = "url"
 video_format = "url"
+public_enabled = false
+public_key = ""
 
 [token]
 auto_refresh = true

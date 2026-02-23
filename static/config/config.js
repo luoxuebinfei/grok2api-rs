@@ -29,7 +29,9 @@ const LOCALE_MAP = {
     "app_key": { title: "后台密码", desc: "登录 Grok2API-rs 服务管理后台的密码，请妥善保管。" },
     "app_url": { title: "应用地址", desc: "当前 Grok2API-rs 服务的外部访问 URL，用于文件链接访问。" },
     "image_format": { title: "图片格式", desc: "生成的图片格式（url 或 base64）。" },
-    "video_format": { title: "视频格式", desc: "生成的视频格式（仅支持 url）。" }
+    "video_format": { title: "视频格式", desc: "生成的视频格式（仅支持 url）。" },
+    "public_enabled": { title: "公开页面", desc: "启用后，用户可通过 /chat、/imagine、/video、/voice 路径访问公开功能页面；关闭时这些页面返回 404。" },
+    "public_key": { title: "公开密钥", desc: "访问公开页面所需的认证密钥。设置后用户需在登录页输入此密钥才能使用；留空则任何人均可免认证访问。" }
   },
   "grok": {
     "label": "Grok 设置",
@@ -306,7 +308,7 @@ function renderConfig(data) {
         built = buildJsonInput(section, key, val);
       }
       else {
-        if (key === 'api_key' || key === 'app_key') {
+        if (key === 'api_key' || key === 'app_key' || key === 'public_key') {
           built = buildSecretInput(section, key, val);
         } else {
           built = buildTextInput(section, key, val);

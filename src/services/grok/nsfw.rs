@@ -271,7 +271,9 @@ impl NsfwService {
         }
         if let Some(message) = grpc_message_header {
             let decoded = decode(&message).map(|v| v.to_string()).unwrap_or(message);
-            trailers.entry("grpc-message".to_string()).or_insert(decoded);
+            trailers
+                .entry("grpc-message".to_string())
+                .or_insert(decoded);
         }
 
         let grpc = get_grpc_status(&trailers);
